@@ -17,21 +17,21 @@
         </div>
 
         <div v-else-if="m.loading" class="bubble bot loading">
-          <span class="dot" /><span class="dot" /><span class="dot" /> 思考中
+          <span class="dot" /><span class="dot" /><span class="dot" /> {{ t('assistant.thinking') }}
         </div>
 
         <div v-else-if="m.error" class="bubble bot error">{{ m.error }}</div>
 
         <div v-else-if="m.result" class="bubble bot">
           <div v-if="m.streaming" class="bubble-inline-loading">
-            <span class="dot" /><span class="dot" /><span class="dot" /> {{ m.conflictStage || m.contractStage || m.workpaperStage || '正在分析文件…' }}
+            <span class="dot" /><span class="dot" /><span class="dot" /> {{ m.conflictStage || m.contractStage || m.workpaperStage || t('assistant.analyzing') }}
           </div>
           <div v-else-if="m.result?.answer?.conclusion && !m.conflict && !m.contract && !m.workpaper" class="qa-conclusion">{{ m.result.answer.conclusion }}</div>
 
           <div v-else-if="m.contract" class="contract-report">
             <div class="contract-report-head">
               <span>合同审计：{{ m.contract.totalIssues }} 项待关注</span>
-              <el-button size="small" plain @click="exportContract(m.contract.taskId)">导出报告</el-button>
+              <el-button size="small" plain @click="exportContract(m.contract.taskId)">{{ t('common.export') }}</el-button>
             </div>
             <div v-if="m.contract.contractType" class="contract-sub">合同类型 · {{ m.contract.contractType }}</div>
             <div v-if="m.contract.issues?.length" class="contract-section">文本审核</div>
@@ -60,7 +60,7 @@
           <div v-else-if="m.workpaper" class="contract-report">
             <div class="contract-report-head">
               <span>底稿审核：符合 {{ m.workpaper.summary?.pass ?? 0 }} · 不符合 {{ m.workpaper.summary?.fail ?? 0 }} · 无法判断 {{ m.workpaper.summary?.unknown ?? 0 }}</span>
-              <el-button size="small" plain @click="exportWorkpaper(m.workpaper.taskId)">导出报告</el-button>
+              <el-button size="small" plain @click="exportWorkpaper(m.workpaper.taskId)">{{ t('common.export') }}</el-button>
             </div>
             <div class="contract-sub">被审计单位 {{ m.workpaper.unitCount || 0 }} 家 · 审计底稿 {{ m.workpaper.workpaperCount || 0 }} 份</div>
             <div v-if="m.workpaper.summary?.conclusion" class="qa-conclusion">{{ m.workpaper.summary.conclusion }}</div>
@@ -78,13 +78,13 @@
 
           <div v-else-if="m.conflict && !m.conflict.conflicts?.length" class="qa-conclusion">
             <span>{{ m.conflict.conflictCount ? `检出 ${m.conflict.conflictCount} 处互斥条款` : '未检出互斥条款' }}</span>
-            <el-button v-if="m.conflict.conflictCount" size="small" plain style="margin-left:10px" @click="exportConflict(m.conflict.taskId)">导出报告</el-button>
+            <el-button v-if="m.conflict.conflictCount" size="small" plain style="margin-left:10px" @click="exportConflict(m.conflict.taskId)">{{ t('common.export') }}</el-button>
           </div>
 
           <div v-if="m.conflict && m.conflict.conflicts?.length" class="conflict-report">
             <div class="conflict-report-head">
               <span>检出 {{ m.conflict.conflictCount }} 处互斥条款</span>
-              <el-button size="small" plain @click="exportConflict(m.conflict.taskId)">导出报告</el-button>
+              <el-button size="small" plain @click="exportConflict(m.conflict.taskId)">{{ t('common.export') }}</el-button>
             </div>
             <div v-for="c in m.conflict.conflicts" :key="c.index" class="conflict-row">
               <div class="conflict-row-head">
@@ -129,9 +129,9 @@
           </div>
 
           <div v-if="!m.streaming && m.result?.id && m.result.status !== 'running'" class="qa-feedback">
-            <button class="fb-btn" :class="{ active: m.result?.feedback === 'good' }" title="有帮助" @click="rate(i, 'good')">👍</button>
-            <button class="fb-btn" :class="{ active: m.result?.feedback === 'bad' }" title="没帮助" @click="rate(i, 'bad')">👎</button>
-            <button class="fb-btn fb-retry" title="重新生成这条回答" @click="retryMessage(i)">↻ 重试</button>
+            <button class="fb-btn" :class="{ active: m.result?.feedback === 'good' }" :title="t('common.good')" @click="rate(i, 'good')">👍</button>
+            <button class="fb-btn" :class="{ active: m.result?.feedback === 'bad' }" :title="t('common.bad')" @click="rate(i, 'bad')">👎</button>
+            <button class="fb-btn fb-retry" :title="t('common.retry')" @click="retryMessage(i)">↻ 重试</button>
           </div>
         </div>
       </div>
@@ -151,11 +151,11 @@
         type="textarea"
         :rows="2"
         resize="none"
-        placeholder="上传制度文件并提问，或直接向资料库提问…"
+        :placeholder="t('assistant.placeholder')"
         @keydown.enter.exact.prevent="send"
       />
-      <el-button v-if="sending" type="danger" plain @click="stopStream">停止</el-button>
-      <el-button v-else type="primary" :disabled="!input.trim() && !picked.length" :loading="uploading" @click="send">发送</el-button>
+      <el-button v-if="sending" type="danger" plain @click="stopStream">{{ t('assistant.stop') }}</el-button>
+      <el-button v-else type="primary" :disabled="!input.trim() && !picked.length" :loading="uploading" @click="send">{{ t('assistant.send') }}</el-button>
     </div>
   </div>
 </template>
@@ -165,6 +165,7 @@ import { computed, nextTick, onActivated, onMounted, onUnmounted, ref } from 'vu
 import { useRoute, useRouter } from 'vue-router'
 import { Paperclip } from '@element-plus/icons-vue'
 import { ElMessage, type UploadProps } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import type {
@@ -172,6 +173,7 @@ import type {
   ContractDetail, WorkpaperDetail, QACitation, QAResult,
 } from '@/types'
 
+const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 const store = useKnowledgeStore()
@@ -183,22 +185,22 @@ const moduleKey = computed(() => {
 })
 const moduleConfig: Record<string, { empty: string; suggests: string[]; defaultQ: string }> = {
   assistant: {
-    empty: '输入问题，基于已导入的资料给出带引用的回答。',
+    empty: t('assistant.guide.assistant'),
     suggests: ['总结最近导入的资料要点', '对比各文档里的方案差异', '找出与某某主题相关的关键结论'],
     defaultQ: '请分析这些文件',
   },
   conflict: {
-    empty: '上传制度文件，检查相互冲突（互斥）的条款。',
+    empty: t('assistant.guide.conflict'),
     suggests: ['检查上传制度之间有没有互斥', '这两份制度对同一事项的规定是否打架'],
     defaultQ: '请对这些文件做制度互斥检测',
   },
   contract: {
-    empty: '上传合同及相关附件，检查文本问题与跨文件勾稽差异。',
+    empty: t('assistant.guide.contract'),
     suggests: ['帮我看看合同有没有什么问题', '核对合同与附件的关键字段是否一致'],
     defaultQ: '请帮我审计这些合同文件',
   },
   workpaper: {
-    empty: '上传审计实施方案和审计工作底稿，检查底稿是否完整、能否支撑结论。',
+    empty: t('assistant.guide.workpaper'),
     suggests: ['帮我复核这些审计工作底稿', '检查底稿是否覆盖实施方案要求的事项'],
     defaultQ: '请帮我审核这些底稿',
   },
@@ -404,7 +406,7 @@ async function runAgent(q: string, files?: string[]) {
             clauses: Number(data.clauses || 0), judgedPairs: Number(data.judgedPairs || 0),
             topics: (data.topics as string[]) || [],
           }
-          m.conflictStage = '正在整理结果…'
+          m.conflictStage = t('assistant.finalizing')
         }
         if (action.tool === 'get_conflict_result' && action.ok && data.conflicts) {
           const c = m.conflict || { taskId: String(data.taskId || ''), conflictCount: Number(data.conflictCount || 0) }
@@ -419,7 +421,7 @@ async function runAgent(q: string, files?: string[]) {
             totalIssues: Number(data.totalIssues || 0), issueCount: Number(data.issueCount || 0),
             reconCount: Number(data.reconCount || 0), issues: [], reconciliation: [],
           }
-          m.contractStage = '正在整理结果…'
+          m.contractStage = t('assistant.finalizing')
         }
         if (action.tool === 'get_contract_result' && action.ok && data.issues) {
           m.contract = data as unknown as ContractDetail
@@ -434,7 +436,7 @@ async function runAgent(q: string, files?: string[]) {
             reconCount: Number(data.reconCount || 0),
             issues: [], reconciliation: [],
           }
-          m.workpaperStage = '正在整理结果…'
+          m.workpaperStage = t('assistant.finalizing')
         }
         if (action.tool === 'get_workpaper_result' && action.ok && data.issues) {
           m.workpaper = data as unknown as WorkpaperDetail
@@ -444,17 +446,17 @@ async function runAgent(q: string, files?: string[]) {
       onConflictProgress: () => {
         // 内部解析/比对阶段不向用户展示，只保留一个稳定的通用状态。
         const m = messages.value[idx] as AssistantMsg
-        m.conflictStage = '正在分析文件…'
+        m.conflictStage = t('assistant.analyzing')
         scrollToEnd()
       },
       onContractProgress: () => {
         const m = messages.value[idx] as AssistantMsg
-        m.contractStage = '正在分析文件…'
+        m.contractStage = t('assistant.analyzing')
         scrollToEnd()
       },
       onWorkpaperProgress: () => {
         const m = messages.value[idx] as AssistantMsg
-        m.workpaperStage = '正在分析文件…'
+        m.workpaperStage = t('assistant.analyzing')
         scrollToEnd()
       },
       onConfirm: (payload) => {

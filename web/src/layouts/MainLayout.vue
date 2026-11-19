@@ -3,7 +3,7 @@
     <aside class="sidebar">
       <div class="brand">
         <span class="brand-mark">审</span>
-        <span>审计工作平台</span>
+        <span>{{ t('app.name') }}</span>
       </div>
       <nav class="nav">
         <template v-for="(group, gi) in navGroups" :key="gi">
@@ -21,14 +21,14 @@
             <div v-else class="nav-item is-disabled">
               <el-icon><component :is="item.icon" /></el-icon>
               <span>{{ item.label }}</span>
-              <el-tag class="nav-tag" size="small" type="info">未启用</el-tag>
+              <el-tag class="nav-tag" size="small" type="info">{{ t('common.disabled') }}</el-tag>
             </div>
           </template>
         </template>
       </nav>
 
       <div class="nav-foot">
-        <div>{{ store.storage ? `存储 ${store.storage.totalMb.toFixed(1)} MB` : '本地数据' }}</div>
+        <div>{{ store.storage ? `${t('common.localData')} ${store.storage.totalMb.toFixed(1)} MB` : t('common.localData') }}</div>
         <div class="storage-bar">
           <span :style="{ width: `${Math.min(100, ((store.storage?.totalMb ?? 0) / 200) * 100)}%` }" />
         </div>
@@ -41,7 +41,7 @@
           <el-icon :size="18"><Menu /></el-icon>
         </el-button>
         <!-- 顶栏是整个系统的门面：固定为平台标识，模块名称与功能留在左侧导航和主工作区 -->
-        <span class="topbar-title">审计工作平台</span>
+        <span class="topbar-title">{{ t('app.name') }}</span>
       </header>
 
       <main class="main-scroll">
@@ -49,11 +49,11 @@
           <!-- 会话栏在顶栏之下，不再与顶栏并排，所有页面共用同一条顶栏 -->
           <aside v-if="isQa" class="qa-rail">
             <div class="qa-rail-head">
-              <span class="qa-rail-title">会话记录</span>
-              <el-button text size="small" :icon="Plus" @click="newSessionFromSidebar">新建</el-button>
+              <span class="qa-rail-title">{{ t('common.sessionHistory') }}</span>
+              <el-button text size="small" :icon="Plus" @click="newSessionFromSidebar">{{ t('common.newSession') }}</el-button>
             </div>
             <div class="qa-rail-list">
-              <div v-if="!store.qaSessions.length" class="qa-rail-empty">暂无会话</div>
+              <div v-if="!store.qaSessions.length" class="qa-rail-empty">{{ t('assistant.noSession') }}</div>
               <div
                 v-for="s in store.qaSessions"
                 :key="s.id"
@@ -61,7 +61,7 @@
                 :class="{ 'is-active': s.id === store.qaSessionId }"
                 @click="pickSession(s.id)"
               >
-                <div class="qa-rail-item-title">{{ s.title || '新会话' }}</div>
+                <div class="qa-rail-item-title">{{ s.title || t('common.newSession') }}</div>
                 <div class="qa-rail-item-meta">{{ s.updatedAt }} · {{ s.count }} 条</div>
                 <el-button text size="small" class="qa-rail-del" @click.stop="removeSessionFromSidebar(s.id)">×</el-button>
               </div>
@@ -78,7 +78,7 @@
       </main>
     </div>
 
-    <el-drawer v-model="mobileNav" title="导航" size="210px" direction="ltr">
+    <el-drawer v-model="mobileNav" :title="t('nav.title')" size="210px" direction="ltr">
       <div class="nav">
         <template v-for="(group, gi) in navGroups" :key="gi">
           <div class="nav-group">{{ group.label }}</div>
@@ -97,11 +97,11 @@
 
       <div class="side-sessions mobile">
         <div class="side-sessions-head">
-          <span>会话记录</span>
-          <el-button text size="small" :icon="Plus" @click="newSessionFromSidebarMobile">新建</el-button>
+          <span>{{ t('common.sessionHistory') }}</span>
+          <el-button text size="small" :icon="Plus" @click="newSessionFromSidebarMobile">{{ t('common.newSession') }}</el-button>
         </div>
         <div class="side-sessions-list">
-          <div v-if="!store.qaSessions.length" class="side-sessions-empty">暂无会话</div>
+          <div v-if="!store.qaSessions.length" class="side-sessions-empty">{{ t('assistant.noSession') }}</div>
           <div
             v-for="s in store.qaSessions"
             :key="s.id"
@@ -109,7 +109,7 @@
             :class="{ 'is-active': s.id === store.qaSessionId }"
             @click="pickSessionMobile(s.id)"
           >
-            <div class="side-session-title">{{ s.title || '新会话' }}</div>
+            <div class="side-session-title">{{ s.title || t('common.newSession') }}</div>
             <div class="side-session-meta">{{ s.updatedAt }} · {{ s.count }} 条</div>
             <el-button text size="small" class="side-session-del" @click.stop="removeSessionFromSidebar(s.id)">×</el-button>
           </div>
@@ -123,6 +123,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound, Document, FolderOpened, Menu, Plus, Setting } from '@element-plus/icons-vue'
@@ -140,6 +141,7 @@ interface NavItem {
   enabled: boolean
 }
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const store = useKnowledgeStore()
@@ -161,7 +163,7 @@ const assistantModules = computed<NavItem[]>(() => {
     const path = m?.route || `/${id}`
     items.push({
       key: id,
-      label: m?.name || ({ assistant: '审计助手', conflict: '制度互斥', contract: '合同审计', workpaper: '底稿审核' } as Record<string, string>)[id],
+      label: m?.name || ({ assistant: t('nav.assistant'), conflict: t('nav.conflict'), contract: t('nav.contract'), workpaper: t('nav.workpaper') } as Record<string, string>)[id],
       path,
       icon: moduleIcons[id] ?? (id === 'assistant' ? ChatDotRound : Document),
       enabled: true,
@@ -177,14 +179,14 @@ const assistantModules = computed<NavItem[]>(() => {
 
 const navGroups = computed(() => [
   {
-    label: '审计模块',
+    label: t('nav.groupAudit'),
     items: assistantModules.value,
   },
   {
-    label: '基础',
+    label: t('nav.groupBasic'),
     items: [
-      { key: 'library', label: '资料库', path: '/library', icon: FolderOpened, enabled: true },
-      { key: 'settings', label: '系统设置', path: '/settings', icon: Setting, enabled: true },
+      { key: 'library', label: t('nav.library'), path: '/library', icon: FolderOpened, enabled: true },
+      { key: 'settings', label: t('nav.settings'), path: '/settings', icon: Setting, enabled: true },
     ] as NavItem[],
   },
 ])

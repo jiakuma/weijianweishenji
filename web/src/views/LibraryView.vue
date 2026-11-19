@@ -238,8 +238,8 @@ function onSort(value: string) {
   store.setSort(value as 'time' | 'name')
 }
 
-function onStarred(value: boolean) {
-  store.starredOnly = value
+function onStarred(value: unknown) {
+  store.starredOnly = Boolean(value)
   void store.loadDocs()
 }
 

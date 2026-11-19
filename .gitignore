@@ -25,6 +25,7 @@ server/data/
 *.sqlite3
 .env
 .env.*
+!.env.template
 data/uploads/
 data/tmp/
 

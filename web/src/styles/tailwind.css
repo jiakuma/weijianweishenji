@@ -1,0 +1,20 @@
+@tailwind utilities;
+
+:root {
+  --color-primary: #2e57e5;
+  --color-surface-sunken: #f7f9fc;
+  --color-surface: #ffffff;
+  --color-text-primary: #1f2329;
+  --color-text-secondary: #646a73;
+  --color-border: #dee0e3;
+  --el-color-primary: var(--color-primary);
+}
+
+body {
+  background: var(--color-surface-sunken);
+  color: var(--color-text-primary);
+}
+
+.card-shadow {
+  box-shadow: 0 1px 4px rgba(31, 35, 41, 0.08);
+}

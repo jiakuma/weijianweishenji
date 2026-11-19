@@ -26,11 +26,24 @@ TEMP_UPLOAD_DIR = DATA_DIR / "assistant_uploads"
 for directory in (DATA_DIR, UPLOAD_DIR, PARSED_DIR, ASSET_DIR, BACKUP_DIR, TEMP_UPLOAD_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
-DB_URL = os.getenv("DB_URL", f"sqlite:///{DATA_DIR / 'knowledge.db'}")
-_DB_ARGS = {"check_same_thread": False, "timeout": 30} if DB_URL.startswith("sqlite") else {}
+from .config import settings
+
+if settings.is_postgres:
+    # 标准栈：PostgreSQL 15，所有 ORM 与原生 SQL 固定落到应用专属 schema
+    DB_URL = settings.sync_database_uri
+    _DB_ARGS = {
+        "options": f"-csearch_path={settings.DB_SCHEMA}",
+        "connect_timeout": 10,
+    }
+else:
+    # 本地单机降级路径，仅用于开发验证
+    DB_URL = settings.sqlite_uri
+    _DB_ARGS = {"check_same_thread": False, "timeout": 30}
 engine = create_engine(DB_URL, connect_args=_DB_ARGS, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 Base = declarative_base()
+if settings.is_postgres:
+    Base.metadata.schema = settings.DB_SCHEMA
 
 
 class Document(Base):
@@ -509,15 +522,20 @@ def session_to_dict(s: QASession, count: int = 0, last_question: str = "") -> di
 
 
 def init_db() -> None:
-    Base.metadata.create_all(engine)
-    if DB_URL.startswith("sqlite"):
+    if settings.is_postgres:
+        # 标准栈：结构变更只走 Alembic，禁止 create_all
+        from .run_migrations import ensure_schema_sync, run_migrations
+        ensure_schema_sync()
+        run_migrations()
+    else:
+        # 本地降级路径保留原有建表行为，仅用于开发验证
+        Base.metadata.create_all(engine)
         # WAL 允许多线程读写并发，写锁等待 30s 而不是立即抛 database is locked
         with engine.connect() as conn:
             conn.execute(sa_text("PRAGMA journal_mode=WAL"))
             conn.execute(sa_text("PRAGMA busy_timeout=30000"))
-    with SessionLocal() as session:
         # 兼容旧库：新列以 ALTER TABLE 追加，不改已有列
-        if DB_URL.startswith("sqlite"):
+        with SessionLocal() as session:
             cols = {r[1] for r in session.execute(__import__("sqlalchemy").text("PRAGMA table_info(import_tasks)"))}
             for name, ddl in (
                 ("stage", "VARCHAR DEFAULT ''"),
@@ -528,13 +546,12 @@ def init_db() -> None:
             ):
                 if name not in cols:
                     session.execute(__import__("sqlalchemy").text(f"ALTER TABLE import_tasks ADD COLUMN {name} {ddl}"))
-            # qa_sessions.module：会话按助手模块隔离（旧库存量会话归到 assistant）
             qa_cols = {r[1] for r in session.execute(__import__("sqlalchemy").text("PRAGMA table_info(qa_sessions)"))}
             if "module" not in qa_cols:
                 session.execute(__import__("sqlalchemy").text(
                     "ALTER TABLE qa_sessions ADD COLUMN module VARCHAR DEFAULT 'assistant'"))
             session.commit()
-
+    with SessionLocal() as session:
         for key, value in DEFAULT_SETTINGS.items():
             if not session.get(SettingRow, key):
                 session.add(SettingRow(key=key, value=value))

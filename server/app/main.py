@@ -26,6 +26,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from .config import settings
+from .deps import success_response
+from .errors import (
+    AppError,
+    BadRequestError,
+    NotFoundError,
+    UnauthorizedError,
+    register_exception_handlers,
+)
 from . import parsers, webfetch
 from .classify import classify_document
 from .db import (
@@ -262,6 +271,7 @@ def resume_pending_tasks() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    settings.validate()
     init_db()
     resume_pending_tasks()
     # 存量切片补进向量库，放后台线程避免模型首次加载拖慢启动
@@ -279,22 +289,25 @@ app.add_middleware(
         "http://localhost:5280", "http://127.0.0.1:5280",
         "http://localhost:5180", "http://127.0.0.1:5180",
     ],
-    allow_credentials=False,
+    # SSO 模式依赖同域 cookie，必须允许携带凭证
+    allow_credentials=settings.is_sso,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Access-Token"],
+    allow_headers=["Content-Type", "X-Access-Token", settings.SSO_TRIGGER_HEADER],
 )
 
 install_modules(app)
+register_exception_handlers(app)
+
+# 鉴权模式二选一：sso 用中台统一认证，local 保留本机令牌（仅开发验证）
+if settings.is_sso:
+    from .auth import register_auth_middleware
+    register_auth_middleware(app)
 
 _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
 
-@app.middleware("http")
 async def write_access_guard(request: Request, call_next):
-    """写接口鉴权：配了访问令牌就必须带对；未配令牌时只允许本机写入。
-
-    读接口不拦截，保证资料浏览不受影响。错误信息只给规范化文案，不泄露内部细节。
-    """
+    """本机降级鉴权：写接口需令牌；未配令牌时只允许本机写入。"""
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return await call_next(request)
     with SessionLocal() as s:
@@ -309,11 +322,18 @@ async def write_access_guard(request: Request, call_next):
     return await call_next(request)
 
 
+if not settings.is_sso:
+    app.middleware("http")(write_access_guard)
+
+
 # ---------------------------------------------------------------- 基础
 
 @app.get("/api/health")
+@app.get("/health", include_in_schema=False)
 def health():
-    return {"ok": True, "service": "audit-platform", "time": datetime.now().isoformat()}
+    # 兼容原有前端的 ok 字段，同时满足标准健康检查契约
+    return {"status": "OK", "ok": True, "service": "audit-platform",
+            "time": datetime.now().isoformat()}
 
 
 @app.get("/api/modules")
@@ -421,7 +441,7 @@ def serve_asset(asset_id: str):
     with SessionLocal() as s:
         row = s.get(DocumentFile, asset_id)
         if not row or not Path(row.stored_path).exists():
-            return JSONResponse({"error": "资源不存在"}, status_code=404)
+            raise NotFoundError("资源不存在")
         return FileResponse(row.stored_path)
 
 
@@ -432,7 +452,7 @@ def download_original(doc_id: str):
             DocumentFile.doc_id == doc_id, DocumentFile.kind == "original").first()
         d = s.get(Document, doc_id)
         if not row or not Path(row.stored_path).exists():
-            return JSONResponse({"error": "原始文件不存在"}, status_code=404)
+            raise NotFoundError("原始文件不存在")
         return FileResponse(row.stored_path, filename=(d.title if d else row.original_name),
                             content_disposition_type="inline")
 
@@ -444,7 +464,7 @@ def preview_original(doc_id: str):
         row = s.query(DocumentFile).filter(
             DocumentFile.doc_id == doc_id, DocumentFile.kind == "original").first()
         if not row or not Path(row.stored_path).exists():
-            return JSONResponse({"error": "原始文件不存在"}, status_code=404)
+            raise NotFoundError("原始文件不存在")
         p = Path(row.stored_path)
         if p.suffix.lower() == ".pdf":
             return FileResponse(p, content_disposition_type="inline")
@@ -452,8 +472,8 @@ def preview_original(doc_id: str):
             pdf = _doc_to_pdf(p)
             if pdf:
                 return FileResponse(pdf, content_disposition_type="inline")
-            return JSONResponse({"error": "未安装 LibreOffice，无法内联预览 Office 文档"}, status_code=415)
-        return JSONResponse({"error": "unsupported"}, status_code=415)
+            raise BadRequestError("未安装 LibreOffice，无法内联预览 Office 文档")
+        raise BadRequestError("不支持的文件格式")
 
 
 def _find_soffice() -> str | None:
