@@ -2,7 +2,7 @@
   <div v-loading="loading">
     <div class="page-head" v-if="doc">
       <div style="display: flex; align-items: center; gap: 10px; min-width: 0">
-        <el-button text @click="router.back()"><el-icon><ArrowLeft /></el-icon></el-button>
+        <el-button text title="返回上一页" @click="router.back()"><el-icon><ArrowLeft /></el-icon>返回</el-button>
         <h1 class="page-title" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ doc.title }}</h1>
         <el-tag size="small" effect="plain" round>{{ doc.format }}</el-tag>
       </div>

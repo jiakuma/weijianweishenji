@@ -139,6 +139,60 @@ export interface QACitation {
   page: number
   section: string
   quote: string
+  /** doc = 制度原文切片；issue = 历史审计问题。缺省按 doc 处理。 */
+  kind?: 'doc' | 'issue'
+  /** 正文 [n] 角标对应的 1-based 编号。 */
+  refNo?: number
+  issueId?: string
+  sourceYear?: number | string
+  sourceFile?: string
+  auditSubject?: string
+  auditProject?: string
+  category?: string
+  catL1?: string
+  catL2?: string
+  catL3?: string
+  catL4?: string
+  manifestation?: string
+  problemDesc?: string
+  legalBasis?: string
+  remediation?: string
+  snippet?: string
+}
+
+/** 历史审计问题定性库条目（对应后端 audit_issues._row_to_dict）。 */
+export interface AuditIssue {
+  id: string
+  issueId: string
+  sourceYear: number
+  sourceFile: string
+  auditSubject: string
+  auditProject: string
+  catL1: string
+  catL2: string
+  catL3: string
+  catL4: string
+  category: string
+  manifestation: string
+  problemDesc: string
+  legalBasis: string
+  remediation: string
+  remediationStatus: string
+  remediationType?: string
+  remediationDeadline?: string
+  disclosure?: string
+  auditType?: string
+  snippet?: string
+  score?: number
+  notice?: string
+}
+
+export interface AuditIssueStats {
+  dbTotal: number
+  vectorTotal: number
+  byYear: Record<string, number>
+  bySubject: Record<string, number>
+  notice?: string
 }
 
 export interface QAAnswer {

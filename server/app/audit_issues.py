@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel
+from sqlalchemy import or_
 
 from . import milvus_store
 from .db import AuditIssue, SessionLocal, now_str
@@ -352,6 +353,75 @@ def _row_to_dict(row: AuditIssue, snippet: str = "", score: float = 0.0) -> dict
         "score": round(score, 1),
         "notice": NOTICE,
     }
+
+
+def list_issues(
+    page: int = 1,
+    size: int = 20,
+    year: str = "",
+    category: str = "",
+    subject: str = "",
+    q: str = "",
+) -> dict:
+    """历史问题库分页列表：先应用全部筛选条件再统计总数。
+
+    Args:
+        page: 1 起的页码，小于 1 时按 1 处理。
+        size: 每页条数，裁剪到 1~100。
+        year: source_year 精确匹配（非数字年份返回空结果）。
+        category: cat_l1~cat_l4 任一字段 LIKE 匹配。
+        subject: audit_subject LIKE 匹配。
+        q: search_text LIKE 匹配（覆盖分类、表现、问题、依据、整改等字段）。
+
+    Returns:
+        dict: {"items": [...], "total": int, "page": int, "size": int}。
+    """
+    page = max(1, int(page or 1))
+    size = max(1, min(int(size or 20), 100))
+
+    with SessionLocal() as session:
+        query = session.query(AuditIssue)
+        year_text = str(year or "").strip()
+        if year_text:
+            try:
+                year_value = int(year_text)
+            except (TypeError, ValueError):
+                year_value = -1  # 非法年份不可能命中任何记录
+            query = query.filter(AuditIssue.source_year == year_value)
+        category_text = str(category or "").strip()
+        if category_text:
+            pattern = f"%{category_text}%"
+            query = query.filter(or_(
+                AuditIssue.cat_l1.like(pattern),
+                AuditIssue.cat_l2.like(pattern),
+                AuditIssue.cat_l3.like(pattern),
+                AuditIssue.cat_l4.like(pattern),
+            ))
+        subject_text = str(subject or "").strip()
+        if subject_text:
+            query = query.filter(AuditIssue.audit_subject.like(f"%{subject_text}%"))
+        keyword = str(q or "").strip()
+        if keyword:
+            query = query.filter(AuditIssue.search_text.like(f"%{keyword}%"))
+
+        total = query.count()
+        rows = (query
+                .order_by(AuditIssue.source_year.desc(), AuditIssue.id.asc())
+                .offset((page - 1) * size)
+                .limit(size)
+                .all())
+        items = [_row_to_dict(row) for row in rows]
+    return {"items": items, "total": total, "page": page, "size": size}
+
+
+def get_issue(issue_id: str) -> dict | None:
+    """按主键取一条历史审计问题；不存在时返回 None。"""
+    key = str(issue_id or "").strip()
+    if not key:
+        return None
+    with SessionLocal() as session:
+        row = session.get(AuditIssue, key)
+        return _row_to_dict(row) if row else None
 
 
 def _lexical_search(query: str, limit: int) -> list[dict]:

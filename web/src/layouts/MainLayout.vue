@@ -126,7 +126,7 @@ import { computed, onMounted, onUnmounted, ref, watch, type Component } from 'vu
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ChatDotRound, Document, FolderOpened, Menu, Plus, Setting } from '@element-plus/icons-vue'
+import { ChatDotRound, Collection, Document, FolderOpened, Menu, Plus, Setting } from '@element-plus/icons-vue'
 import KnowledgeMap from '@/components/KnowledgeMap.vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { api } from '@/api'
@@ -186,6 +186,7 @@ const navGroups = computed(() => [
     label: t('nav.groupBasic'),
     items: [
       { key: 'library', label: t('nav.library'), path: '/library', icon: FolderOpened, enabled: true },
+      { key: 'issues', label: t('nav.issues'), path: '/issues', icon: Collection, enabled: true },
       { key: 'settings', label: t('nav.settings'), path: '/settings', icon: Setting, enabled: true },
     ] as NavItem[],
   },
@@ -215,6 +216,7 @@ async function newSessionFromSidebarMobile() {
 function isActive(path: string) {
   if (!path) return false
   if (path === '/library') return route.path === '/library' || route.path.startsWith('/document')
+  if (path === '/issues') return route.path === '/issues'
   return route.path === path || route.path.startsWith(path + '/')
 }
 

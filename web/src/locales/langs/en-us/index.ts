@@ -32,6 +32,7 @@ export default {
     contract: 'Contract Audit',
     workpaper: 'Workpaper Review',
     library: 'Library',
+    issues: 'Issue Library',
     import: 'Import',
     settings: 'Settings',
     knowledgeMap: 'Knowledge Map',

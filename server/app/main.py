@@ -1117,6 +1117,30 @@ def search_audit_issues(body: AuditIssueSearchBody):
     return audit_issues.search(body.query, limit=max(1, min(body.limit, 50)))
 
 
+@app.get("/api/audit-issues/list")
+def list_audit_issues(
+    page: int = 1,
+    size: int = 20,
+    year: str = "",
+    category: str = "",
+    subject: str = "",
+    q: str = "",
+):
+    """历史问题库分页浏览：需在 /{issue_id} 之前注册，避免 list 被当成主键。"""
+    from . import audit_issues
+    return audit_issues.list_issues(
+        page=page, size=max(1, min(size, 100)),
+        year=year, category=category, subject=subject, q=q,
+    )
+
+
+@app.get("/api/audit-issues/{issue_id}")
+def get_audit_issue(issue_id: str):
+    """历史问题详情；找不到时返回空对象，便于前端统一处理。"""
+    from . import audit_issues
+    return audit_issues.get_issue(issue_id) or {}
+
+
 # ---------------------------------------------------------------- 检索 / 问答 / 笔记（保留原接口）
 
 @app.get("/api/search")

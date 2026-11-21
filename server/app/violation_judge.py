@@ -63,8 +63,13 @@ def judge_violation(phenomenon: str, limit: int = 6) -> dict:
         references.append({
             "issueId": item.get("id"),
             "sourceYear": item.get("sourceYear"),
+            "sourceFile": item.get("sourceFile"),
             "auditSubject": item.get("auditSubject"),
+            "auditProject": item.get("auditProject"),
             "category": item.get("category"),
+            "catL1": item.get("catL1"),
+            "catL2": item.get("catL2"),
+            "catL3": item.get("catL3"),
             "catL4": item.get("catL4"),
             "manifestation": item.get("manifestation"),
             "problemDesc": item.get("problemDesc"),

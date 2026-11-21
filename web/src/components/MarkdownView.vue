@@ -2,7 +2,11 @@
 import { computed } from 'vue'
 import MarkdownIt from 'markdown-it'
 
-const props = defineProps<{ text: string }>()
+const props = defineProps<{
+  text: string
+  /** 1-based 角标号 → 引用类型（doc / issue），用于区分角标颜色与提示。 */
+  citeKinds?: Record<number, string>
+}>()
 const emit = defineEmits<{ (e: 'cite', index: number): void }>()
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
@@ -23,10 +27,17 @@ md.inline.ruler.after('text', 'cite_ref', (state: any, silent: boolean) => {
 })
 md.renderer.rules.cite_ref = (tokens: any[], idx: number) => {
   const n = Number(tokens[idx].content)
-  return `<sup class="md-cite" data-cite="${n}" title="查看引用 ${n}">${n}</sup>`
+  const isIssue = (props.citeKinds || {})[n] === 'issue'
+  const cls = isIssue ? 'md-cite md-cite-issue' : 'md-cite'
+  const title = isIssue ? '查看历史问题详情' : '查看引用原文'
+  return `<sup class="${cls}" data-cite="${n}" title="${title}">${n}</sup>`
 }
 
-const html = computed(() => md.render(props.text || ''))
+const html = computed(() => {
+  // 显式依赖 citeKinds：引用类型变化（流式期间 citations 到达）时重渲染角标。
+  void props.citeKinds
+  return md.render(props.text || '')
+})
 
 function onClick(e: MouseEvent) {
   const el = (e.target as HTMLElement | null)?.closest?.('sup[data-cite]') as HTMLElement | null
@@ -75,4 +86,6 @@ function onClick(e: MouseEvent) {
   vertical-align: super;
 }
 .md-body :deep(.md-cite:hover) { background: #d6e2fd; }
+.md-body :deep(.md-cite-issue) { color: #b35c12; background: #fff1df; }
+.md-body :deep(.md-cite-issue:hover) { background: #ffe0b8; }
 </style>

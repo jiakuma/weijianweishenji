@@ -32,6 +32,7 @@ export default {
     contract: '合同审计',
     workpaper: '底稿审核',
     library: '资料库',
+    issues: '历史问题库',
     import: '导入资料',
     settings: '系统设置',
     knowledgeMap: '知识图谱',

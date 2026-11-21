@@ -192,13 +192,15 @@ _SYSTEM_NATIVE = (
     "当用户要求审合同/看合同有没有问题/查违规时，必须直接调用 audit_contract 并把全部 tmp- ID 作为 docIds 传入；"
     "当用户要求审底稿/复核审计工作底稿/检查底稿是否规范时，必须直接调用 audit_workpaper 并把全部 tmp- ID 作为 docIds 传入；"
     "当用户要求查制度冲突/互斥时，必须直接调用 detect_conflict。不要先查导入任务，也不要回答「没收到文件」。\n"
-    "8. 当用户想找某类制度、询问库里有哪些相关制度/规定（如「差旅费有哪些制度」「预算管理相关的制度都有什么」）时，"
-    "调用 recall_regulations 而不是 search_docs，它返回文档级制度清单；search_docs 只返回碎片切片。"
+    "8. 判定类问题最高优先级：当用户描述某种现象并问「是否违规 / 违反什么制度 / 有什么依据 / "
+    "有没有法条 / 以前有没有类似审计问题」时，必须优先调用 judge_violation，而不是 recall_regulations "
+    "或 search_docs。judge_violation 一次返回历史相似问题及其定性依据、反查到的制度条款原文和可点击引用；"
+    "不要只用 recall_regulations / search_docs，也不要凭空判断。"
+    "正文提到历史问题时，必须用其对应的 [编号] 标注（编号取自「可用引用」中标为〔历史问题〕的条目），"
+    "用户点击该角标可查看历史问题详情。回答时明确说明这是相似性参考，不构成违规定性，最终定性须由审计人员复核。\n"
+    "9. 只有单纯找某类制度、询问库里有哪些相关制度/规定（如「差旅费有哪些制度」「预算管理相关的制度都有什么」）时，"
+    "才调用 recall_regulations 而不是 search_docs，它返回文档级制度清单；search_docs 只返回碎片切片。"
     "助手只做检索与提示，制度适用与定性须由审计人员复核。\n"
-    "9. 当用户描述某种现象并问「是否违规 / 违反什么制度 / 有什么依据 / 有没有法条 / "
-    "以前有没有类似审计问题」时，调用 judge_violation，它返回历史相似问题及其定性依据、"
-    "以及反查到的制度条款原文和可点击引用；不要只用 search_docs 或凭空判断。"
-    "回答时明确说明这是相似性参考，不构成违规定性，最终定性须由审计人员复核。\n"
     "10. 不要输出 JSON 以外的任何内容。"
 )
 
@@ -225,11 +227,13 @@ _SYSTEM_JSON = (
     "当用户要求审合同/看合同有没有问题/查违规时，必须直接调用 audit_contract 并把全部 tmp- ID 作为 docIds 传入；"
     "当用户要求审底稿/复核审计工作底稿/检查底稿是否规范时，必须直接调用 audit_workpaper 并把全部 tmp- ID 作为 docIds 传入；"
     "当用户要求查制度冲突/互斥时，必须直接调用 detect_conflict。不要先查导入任务，也不要回答「没收到文件」。"
-    "当用户想找某类制度、询问库里有哪些相关制度/规定时，调用 recall_regulations 而不是 search_docs，"
+    "判定类问题最高优先级：当用户描述某种现象并问「是否违规 / 违反什么制度 / 有什么依据 / "
+    "有没有法条 / 以前有没有类似审计问题」时，必须优先调用 judge_violation，而不是 recall_regulations "
+    "或 search_docs。judge_violation 同时返回历史相似问题及定性依据、制度条款原文和可点击引用；"
+    "正文提到历史问题时必须用对应的 [编号] 标注（编号取自「可用引用」中标为〔历史问题〕的条目），"
+    "用户点击角标可查看历史问题详情；回答时说明这是相似性参考，不构成违规定性，须由审计人员复核。"
+    "只有单纯找某类制度、询问库里有哪些相关制度/规定时才调用 recall_regulations 而不是 search_docs，"
     "它返回文档级制度清单；助手只做检索与提示，制度适用与定性须由审计人员复核。"
-    "当用户描述某种现象并问「是否违规 / 违反什么制度 / 有什么依据 / 有没有法条 / "
-    "以前有没有类似审计问题」时，调用 judge_violation，它返回历史相似问题及定性依据、"
-    "制度条款原文和可点击引用；回答时说明这是相似性参考，不构成违规定性，须由审计人员复核。"
     "不要输出 JSON 以外的任何内容。"
 )
 
@@ -399,28 +403,64 @@ def _session_context(session_id: str, limit: int = 6) -> str:
 
 
 def _citation_lines(pool: list[dict]) -> str:
+    """给模型看的「可用引用」清单：历史问题与制度条款用不同前缀区分。"""
     if not pool:
         return "（暂无可引用资料）"
-    return "\n".join(
-        f"[{i + 1}] 《{h['docTitle']}》第 {h['page']} 页 · {h.get('snippet', '')[:80]}"
-        for i, h in enumerate(pool)
-    )
+    lines: list[str] = []
+    for i, h in enumerate(pool):
+        if h.get("kind") == "issue":
+            label = h.get("catL4") or h.get("category") or "未分类"
+            detail = h.get("manifestation") or (h.get("problemDesc") or "")[:80]
+            lines.append(
+                f"[{i + 1}] 〔历史问题·{h.get('sourceYear', '')}〕{label} · {detail}"
+            )
+        else:
+            lines.append(
+                f"[{i + 1}] 《{h['docTitle']}》第 {h['page']} 页 · {h.get('snippet', '')[:80]}"
+            )
+    return "\n".join(lines)
 
 
-def _citations_from(pool: list[dict], basis: list[str]) -> list[dict]:
+def _citations_from(pool: list[dict], basis: list[str], markdown: str = "") -> list[dict]:
+    """从 basis 和正文里出现的 [n] 抽取引用，保留两类资料的完整可点击字段。"""
     used: set[int] = set()
-    for text in basis:
+    for text in list(basis or []) + [markdown or ""]:
         for n in re.findall(r"\[(\d+)\]", text):
             idx = int(n)
             if 1 <= idx <= len(pool):
                 used.add(idx - 1)
     if not used:
         used = set(range(min(3, len(pool))))
-    return [{
-        "docId": pool[i]["docId"], "docTitle": pool[i]["docTitle"],
-        "chunkId": pool[i].get("chunkId", ""), "page": pool[i]["page"],
-        "section": pool[i].get("section", "正文"), "quote": pool[i].get("quote", ""),
-    } for i in sorted(used)[:6]]
+    citations: list[dict] = []
+    for i in sorted(used):
+        h = pool[i]
+        if h.get("kind") == "issue":
+            citations.append({
+                "kind": "issue", "refNo": i + 1,
+                "issueId": h.get("issueId", ""),
+                "sourceYear": h.get("sourceYear", ""),
+                "sourceFile": h.get("sourceFile", ""),
+                "auditSubject": h.get("auditSubject", ""),
+                "auditProject": h.get("auditProject", ""),
+                "category": h.get("category", ""),
+                "catL1": h.get("catL1", ""), "catL2": h.get("catL2", ""),
+                "catL3": h.get("catL3", ""), "catL4": h.get("catL4", ""),
+                "manifestation": h.get("manifestation", ""),
+                "problemDesc": h.get("problemDesc", ""),
+                "legalBasis": h.get("legalBasis", ""),
+                "remediation": h.get("remediation", ""),
+                "docTitle": h.get("docTitle", ""),
+                "docId": "", "chunkId": "", "section": "历史问题", "page": 0,
+                "quote": h.get("quote") or h.get("snippet") or "",
+            })
+        else:
+            citations.append({
+                "kind": "doc", "refNo": i + 1,
+                "docId": h.get("docId", ""), "docTitle": h.get("docTitle", ""),
+                "chunkId": h.get("chunkId", ""), "page": h.get("page", 0),
+                "section": h.get("section", "正文"), "quote": h.get("quote", ""),
+            })
+    return citations
 
 
 # 模块入口决定默认审核工具：前端四个入口的提问文本高度相似，
@@ -590,17 +630,64 @@ def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
                     # 因自身耗时（可能 > TOTAL_TIMEOUT）拖垮整个 agent 的判定。
                     tool_time += (result.get("costMs") or 0) / 1000.0
                     if result.get("ok") and call.name in ("search_docs", "recall_regulations", "judge_violation"):
-                        for h in (result.get("data") or {}).get("hits", []):
+                        data = result.get("data") or {}
+                        # 历史问题与制度条款进同一个引用池，正文里的 [n] 才能同时点到两类详情。
+                        if call.name == "judge_violation":
+                            for ref in data.get("references") or []:
+                                if len(pool) >= MAX_POOL:
+                                    break
+                                issue_id = ref.get("issueId") or ""
+                                if not issue_id or any(
+                                    p.get("kind") == "issue" and p.get("issueId") == issue_id
+                                    for p in pool
+                                ):
+                                    continue
+                                label = ref.get("catL4") or ref.get("category") or "未分类"
+                                quote = ref.get("problemDesc") or ref.get("manifestation") or ""
+                                pool.append({
+                                    "kind": "issue",
+                                    "issueId": issue_id,
+                                    "docTitle": f"历史问题·{ref.get('sourceYear', '')}·{label}",
+                                    "page": 0,
+                                    "snippet": quote[:120],
+                                    "quote": quote[:120],
+                                    "sourceYear": ref.get("sourceYear", ""),
+                                    "sourceFile": ref.get("sourceFile", ""),
+                                    "auditSubject": ref.get("auditSubject", ""),
+                                    "auditProject": ref.get("auditProject", ""),
+                                    "category": ref.get("category", ""),
+                                    "catL1": ref.get("catL1", ""),
+                                    "catL2": ref.get("catL2", ""),
+                                    "catL3": ref.get("catL3", ""),
+                                    "catL4": ref.get("catL4", ""),
+                                    "manifestation": ref.get("manifestation", ""),
+                                    "problemDesc": ref.get("problemDesc", ""),
+                                    "legalBasis": ref.get("legalBasis", ""),
+                                    "remediation": ref.get("remediation", ""),
+                                })
+                        for h in data.get("hits") or []:
                             if len(pool) >= MAX_POOL:
                                 break
-                            if not any(p["docId"] == h["docId"] and p.get("chunkId") == h["chunkId"]
-                                       for p in pool):
-                                pool.append(h)
+                            if not h.get("docId"):
+                                continue
+                            if any(
+                                p.get("kind") != "issue" and p.get("docId") == h.get("docId")
+                                and p.get("chunkId") == h.get("chunkId")
+                                for p in pool
+                            ):
+                                continue
+                            item = dict(h)
+                            item.setdefault("kind", "doc")
+                            pool.append(item)
                 # 失败换路：空结果/异常时给模型明确的重试提示，连续两次则收尾
                 if confirmed != "n/a" and not result.get("ok"):
                     hints.append("该写操作未获用户同意，不要重复尝试同类操作，直接说明情况。")
                 elif result.get("ok") and call.name in ("search_docs", "recall_regulations", "judge_violation"):
-                    total = (result.get("data") or {}).get("total", 0)
+                    data = result.get("data") or {}
+                    # judge_violation 的 total 只统计制度 hits，历史问题也要算进命中数。
+                    total = (len(data.get("references") or []) + len(data.get("hits") or [])
+                             if call.name == "judge_violation"
+                             else data.get("total", 0))
                     if total == 0:
                         empty_streak += 1
                         failed_streak = 0
@@ -776,7 +863,7 @@ def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
             "answer": {"conclusion": final["conclusion"],
                        "basis": final.get("basis", []), "notice": notice,
                        "markdown": markdown},
-            "citations": _citations_from(pool, final.get("basis", [])),
+            "citations": _citations_from(pool, final.get("basis", []), markdown),
             "createdAt": now,
             "recallMode": mode,
             "route": "agent",

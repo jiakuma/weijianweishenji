@@ -29,7 +29,8 @@
           <div v-else-if="(m.answerText || m.result?.answer?.markdown || m.result?.answer?.conclusion) && !m.conflict && !m.contract && !m.workpaper" class="qa-markdown">
             <MarkdownView
               :text="m.answerText || m.result?.answer?.markdown || m.result?.answer?.conclusion || ''"
-              @cite="(n: number) => openCitation(i, n)"
+              @cite="(n: number) => openCitation(i, n + 1)"
+              :cite-kinds="citeKinds(m)"
             />
             <span v-if="m.streaming && m.answerText" class="typing-cursor" />
           </div>
@@ -129,9 +130,13 @@
               v-for="(c, ci) in m.result.citations"
               :key="ci"
               class="cite-chip"
-              :title="c.quote"
-              @click="openDoc(c)"
-            >《{{ c.docTitle }}》第 {{ c.page }} 页</button>
+              :class="{ 'cite-chip-issue': c.kind === 'issue' }"
+              :title="c.kind === 'issue' ? '查看历史问题详情' : c.quote"
+              @click="openCitation(i, c.refNo || ci + 1)"
+            >
+              <template v-if="c.kind === 'issue'">历史问题·{{ c.sourceYear }}·{{ c.catL4 || c.category }}</template>
+              <template v-else>《{{ c.docTitle }}》第 {{ c.page }} 页</template>
+            </button>
           </div>
 
           <div v-if="!m.streaming && m.result?.id && m.result.status !== 'running'" class="qa-feedback">
@@ -163,6 +168,60 @@
       <el-button v-if="sending" type="danger" plain @click="stopStream">{{ t('assistant.stop') }}</el-button>
       <el-button v-else type="primary" :disabled="!input.trim() && !picked.length" :loading="uploading" @click="send">{{ t('assistant.send') }}</el-button>
     </div>
+
+    <el-drawer v-model="citeDrawerVisible" title="引用详情" size="560px" append-to-body>
+      <div v-if="activeCitation" class="cite-detail">
+        <template v-if="activeCitation.kind === 'issue'">
+          <div class="cite-detail-title">{{ activeCitation.catL4 || activeCitation.category || '历史审计问题' }}</div>
+          <div class="cite-detail-meta">
+            {{ activeCitation.sourceYear }} 年度 · {{ activeCitation.auditSubject || '未标注主体' }} · {{ activeCitation.auditProject || '未标注项目' }}
+          </div>
+          <div class="cite-detail-section">
+            <div class="cite-detail-label">分类链</div>
+            <div class="cite-detail-cats">
+              <el-tag v-for="(cat, ci) in issueCats(activeCitation)" :key="`${ci}-${cat}`" size="small" effect="plain" round>
+                {{ ci + 1 }}级 · {{ cat }}
+              </el-tag>
+              <span v-if="!issueCats(activeCitation).length">未分类</span>
+            </div>
+          </div>
+          <div v-if="activeCitation.manifestation" class="cite-detail-section">
+            <div class="cite-detail-label">问题表现</div>
+            <div class="cite-detail-text">{{ activeCitation.manifestation }}</div>
+          </div>
+          <div v-if="activeCitation.problemDesc" class="cite-detail-section">
+            <div class="cite-detail-label">问题描述</div>
+            <div class="cite-detail-text">{{ activeCitation.problemDesc }}</div>
+          </div>
+          <div v-if="activeCitation.legalBasis" class="cite-detail-section">
+            <div class="cite-detail-label">定性依据</div>
+            <div class="cite-detail-text">{{ activeCitation.legalBasis }}</div>
+          </div>
+          <div v-if="activeCitation.remediation" class="cite-detail-section">
+            <div class="cite-detail-label">整改措施</div>
+            <div class="cite-detail-text">{{ activeCitation.remediation }}</div>
+          </div>
+          <div v-if="activeCitation.sourceFile" class="cite-detail-section cite-detail-source">
+            <span class="cite-detail-label">来源文件</span>{{ activeCitation.sourceFile }}
+          </div>
+          <div class="cite-detail-notice">历史问题仅供检索参考，定性须由审计人员复核。</div>
+          <div class="cite-detail-actions">
+            <el-button type="primary" @click="openIssueLibrary">打开历史问题库</el-button>
+          </div>
+        </template>
+        <template v-else>
+          <div class="cite-detail-title">《{{ activeCitation.docTitle }}》</div>
+          <div class="cite-detail-meta">第 {{ activeCitation.page }} 页 · {{ activeCitation.section || '正文' }}</div>
+          <div class="cite-detail-section">
+            <div class="cite-detail-label">引用原文</div>
+            <div class="cite-detail-quote">{{ activeCitation.quote || '未记录原文片段' }}</div>
+          </div>
+          <div class="cite-detail-actions">
+            <el-button type="primary" @click="openCitationDoc">打开原文</el-button>
+          </div>
+        </template>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -562,10 +621,43 @@ function openDoc(c: QACitation) {
   void router.push(`/document/${c.docId}?chunk=${c.chunkId}`)
 }
 
+const citeDrawerVisible = ref(false)
+const activeCitation = ref<QACitation | null>(null)
+
+/** 1-based 角标号 → 引用类型，交给 MarkdownView 区分历史问题/制度角标样式。 */
+function citeKinds(m: Msg): Record<number, string> {
+  const kinds: Record<number, string> = {}
+  const list = (m as AssistantMsg).result?.citations || []
+  list.forEach((c, i) => { kinds[c.refNo ?? i + 1] = c.kind || 'doc' })
+  return kinds
+}
+
+function issueCats(c: QACitation): string[] {
+  return [c.catL1, c.catL2, c.catL3, c.catL4].filter((x): x is string => Boolean(x))
+}
+
+/** 所有引用（正文角标与底部 chip）统一先打开右侧抽屉，再决定是否跳转页面。 */
 function openCitation(msgIdx: number, n: number) {
   const m = messages.value[msgIdx] as AssistantMsg
-  const c = m.result?.citations?.[n]
-  if (c) openDoc(c)
+  const list = m.result?.citations || []
+  const idx = list.findIndex((item, i) => (item.refNo ?? i + 1) === n)
+  const c = idx >= 0 ? list[idx] : list[n - 1]
+  if (!c) return
+  activeCitation.value = c
+  citeDrawerVisible.value = true
+}
+
+function openCitationDoc() {
+  const c = activeCitation.value
+  if (!c) return
+  citeDrawerVisible.value = false
+  openDoc(c)
+}
+
+function openIssueLibrary() {
+  const id = activeCitation.value?.issueId
+  citeDrawerVisible.value = false
+  void router.push(id ? `/issues?id=${encodeURIComponent(id)}` : '/issues')
 }
 
 function exportConflict(taskId: string) {
@@ -707,6 +799,20 @@ onUnmounted(() => {
 .qa-cites-label { font-size: 12px; color: var(--muted); }
 .cite-chip { font-size: 12px; color: var(--primary-dark); background: var(--primary-soft); border: 1px solid #d6e2fd; border-radius: 7px; padding: 3px 9px; cursor: pointer; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cite-chip:hover { background: #dde7fe; }
+.cite-chip-issue { color: #b35c12; background: #fff1df; border-color: #f2cf9f; }
+.cite-chip-issue:hover { background: #ffe0b8; }
+
+.cite-detail-title { font-size: 17px; font-weight: 650; color: var(--text); line-height: 1.5; }
+.cite-detail-meta { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.cite-detail-section { margin-top: 18px; }
+.cite-detail-label { display: block; margin-bottom: 5px; font-size: 12px; font-weight: 600; color: var(--sub); }
+.cite-detail-cats { display: flex; flex-wrap: wrap; gap: 6px; }
+.cite-detail-text { font-size: 13px; line-height: 1.8; white-space: pre-wrap; word-break: break-word; }
+.cite-detail-quote { font-size: 13px; line-height: 1.8; white-space: pre-wrap; word-break: break-word; background: var(--surface-soft); border-left: 3px solid var(--primary-light, #9db8f0); border-radius: 5px; padding: 9px 12px; }
+.cite-detail-source { font-size: 12.5px; color: var(--sub); word-break: break-all; }
+.cite-detail-source .cite-detail-label { display: inline; margin-right: 7px; }
+.cite-detail-notice { margin-top: 22px; padding: 9px 11px; font-size: 12px; color: #9a6a12; background: #fff8e8; border-radius: 6px; }
+.cite-detail-actions { display: flex; justify-content: flex-end; margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); }
 
 .qa-feedback { margin-top: 10px; display: flex; align-items: center; gap: 3px; border-top: 1px solid var(--border); padding-top: 7px; }
 .fb-btn { font-size: 13px; line-height: 1; color: var(--muted); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 3px 7px; cursor: pointer; transition: all .15s; }
