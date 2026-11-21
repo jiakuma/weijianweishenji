@@ -1078,6 +1078,45 @@ def list_agent_tools():
     return {"items": agent_tools.list_tools()}
 
 
+# ---------------------------------------------------------------- 历史审计问题定性库
+
+class AuditIssueImportBody(BaseModel):
+    files: list[str]  # xlsx 绝对路径，必须由后端进程直接读取
+    replace: bool = True
+
+
+class AuditIssueSearchBody(BaseModel):
+    query: str
+    limit: int = 10
+
+
+@app.post("/api/audit-issues/import")
+def import_audit_issues(body: AuditIssueImportBody):
+    """进程内导入历史审计问题：解析 xlsx → 写 AuditIssue → 写独立 Milvus collection。
+
+    仅 local 模式开放（生产 SSO 模式禁止从服务端读取本机文件路径）。
+    Milvus Lite 单进程独占锁，必须由运行中的后端进程触发，不要用外部脚本直连。
+    """
+    from . import audit_issues
+    if settings.is_sso:
+        raise BadRequestError("历史问题导入仅在本机 local 模式可用")
+    return audit_issues.import_from_paths(body.files, replace=body.replace)
+
+
+@app.get("/api/audit-issues/stats")
+def audit_issues_stats():
+    """历史问题库入库统计，便于核对解析数量与向量数量。"""
+    from . import audit_issues
+    return audit_issues.stats()
+
+
+@app.post("/api/audit-issues/search")
+def search_audit_issues(body: AuditIssueSearchBody):
+    """历史审计问题语义+词法检索，返回结构化问题条目；不构成违规定性。"""
+    from . import audit_issues
+    return audit_issues.search(body.query, limit=max(1, min(body.limit, 50)))
+
+
 # ---------------------------------------------------------------- 检索 / 问答 / 笔记（保留原接口）
 
 @app.get("/api/search")

@@ -246,6 +246,36 @@ class AssistantUpload(Base):
     created_at = Column(String, default="")
 
 
+class AuditIssue(Base):
+    """历史审计问题定性库：与制度库（Document/Chunk）物理隔离。
+
+    2024 表是审计检查要点库、2025 表是真实问题清单，两表统一映射到本表；
+    可检索文本另写入 Milvus 的独立 collection（audit_issues），不进 knowledge_chunks。
+    本表只用于检索与提示，不构成违规定性，定性须由审计人员复核。
+    """
+    __tablename__ = "audit_issues"
+    id = Column(String, primary_key=True)
+    source_year = Column(Integer, default=0)
+    source_file = Column(String, default="")
+    audit_subject = Column(String, default="")
+    audit_project = Column(String, default="")
+    cat_l1 = Column(String, default="")
+    cat_l2 = Column(String, default="")
+    cat_l3 = Column(String, default="")
+    cat_l4 = Column(String, default="")
+    manifestation = Column(Text, default="")
+    problem_desc = Column(Text, default="")
+    legal_basis = Column(Text, default="")
+    remediation = Column(Text, default="")
+    remediation_status = Column(String, default="")
+    remediation_type = Column(String, default="")
+    remediation_deadline = Column(String, default="")
+    disclosure = Column(String, default="")
+    audit_type = Column(String, default="")
+    search_text = Column(Text, default="")
+    created_at = Column(String, default="")
+
+
 DEFAULT_SETTINGS = {
     "displayName": "审计工作平台",
     "pageSize": 10,
@@ -601,3 +631,11 @@ def init_db() -> None:
                         size_bytes=p.stat().st_size, kind="original",
                     ))
         session.commit()
+
+    # 历史问题库为新增物理表：SQLite 已由 create_all 建好；PostgreSQL 环境
+    # 单独按 checkfirst 补齐这一张新表，不触碰既有表的 Alembic 管理约定。
+    try:
+        AuditIssue.__table__.create(bind=engine, checkfirst=True)
+    except Exception as exc:  # 记录告警，不静默吞；不影响平台其余部分启动
+        import logging
+        logging.getLogger("app").warning("audit_issues 表检查失败：%s", exc)

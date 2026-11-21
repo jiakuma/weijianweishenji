@@ -227,3 +227,140 @@ def sync_all() -> int:
                 existing.update(str(c["id"]) for c in chunks)
                 done += 1
     return done
+
+
+# ---------------------------------------------------------------- 历史问题独立 collection
+# 与制度库 knowledge_chunks 严格隔离：历史审计问题只写下面的 collection。
+# 复用上面的同一个 MilvusClient（Milvus Lite 单进程独占文件锁），不另建客户端。
+
+AUDIT_COLLECTION = "audit_issues"
+_AUDIT_TEXT_MAX = 8000
+
+
+def _ensure_audit_collection(client) -> None:
+    """确保历史问题 collection 存在并已加载；schema 与制度库互不共享。"""
+    if client.has_collection(AUDIT_COLLECTION):
+        client.load_collection(AUDIT_COLLECTION)
+        return
+    from pymilvus import DataType
+    schema = client.create_schema(auto_id=False, enable_dynamic_field=False)
+    schema.add_field("issue_id", DataType.VARCHAR, max_length=128, is_primary=True)
+    schema.add_field("source_year", DataType.INT64)
+    schema.add_field("cat_l4", DataType.VARCHAR, max_length=512)
+    schema.add_field("problem_desc", DataType.VARCHAR, max_length=8192)
+    schema.add_field("search_text", DataType.VARCHAR, max_length=8192)
+    schema.add_field("vector", DataType.FLOAT_VECTOR, dim=_vector_dim())
+    client.create_collection(collection_name=AUDIT_COLLECTION, schema=schema)
+    idx = client.prepare_index_params()
+    idx.add_index(field_name="vector", index_type="HNSW", metric_type="COSINE",
+                  params={"M": 16, "efConstruction": 200})
+    client.create_index(collection_name=AUDIT_COLLECTION, index_params=idx)
+    client.load_collection(AUDIT_COLLECTION)
+
+
+def upsert_audit_issues(rows: list[dict]) -> bool:
+    """批量写入历史问题向量。
+
+    Args:
+        rows: [{'issue_id','source_year','cat_l4','problem_desc','search_text'}, ...]
+    Returns:
+        是否全部写入成功；失败只返回 False，由调用方按词法兜底，不熔断制度库检索。
+    """
+    import logging
+
+    client = _client_or_none()
+    if client is None or not rows:
+        return False
+    from .modules.conflict.embed import encode
+    vecs = encode([str(r.get("search_text") or "")[:_AUDIT_TEXT_MAX] for r in rows])
+    if not vecs or len(vecs) != len(rows):
+        return False
+    try:
+        with _lock:
+            _ensure_audit_collection(client)
+            data = [{
+                "issue_id": str(r.get("issue_id") or ""),
+                "source_year": int(r.get("source_year") or 0),
+                "cat_l4": str(r.get("cat_l4") or "")[:500],
+                "problem_desc": str(r.get("problem_desc") or "")[:_AUDIT_TEXT_MAX],
+                "search_text": str(r.get("search_text") or "")[:_AUDIT_TEXT_MAX],
+                "vector": v,
+            } for r, v in zip(rows, vecs)]
+            # Milvus 单次 upsert 有条目上限，分批提交
+            for start in range(0, len(data), 100):
+                client.upsert(collection_name=AUDIT_COLLECTION, data=data[start:start + 100])
+        return True
+    except Exception as exc:
+        logging.getLogger("knowledge.audit").warning("历史问题向量写入失败：%s", exc)
+        return False
+
+
+def search_audit_issues(query: str, limit: int = 20) -> list[dict]:
+    """历史问题语义检索；不可用时返回空列表，交给调用方词法兜底。"""
+    client = _client_or_none()
+    if client is None or not (query or "").strip():
+        return []
+    from .modules.conflict.embed import encode
+    vecs = encode([query])
+    if not vecs:
+        return []
+    try:
+        with _lock:
+            if not client.has_collection(AUDIT_COLLECTION):
+                return []
+            client.load_collection(AUDIT_COLLECTION)
+            res = client.search(
+                collection_name=AUDIT_COLLECTION, data=vecs, anns_field="vector",
+                limit=limit,
+                output_fields=["issue_id", "source_year", "cat_l4", "problem_desc", "search_text"],
+                search_params={"metric_type": "COSINE", "params": {"ef": 64}},
+            )
+    except Exception:
+        return []
+    hits: list[dict] = []
+    for row in (res[0] if res else []):
+        # 阈值略放宽：宁可多召回，最终排序由 RRF 融合决定
+        distance = float(row.get("distance") or 0)
+        if distance < 0.55:
+            continue
+        ent = row.get("entity") or {}
+        text = str(ent.get("search_text") or "")
+        hits.append({
+            "issueId": str(ent.get("issue_id") or ""),
+            "sourceYear": int(ent.get("source_year") or 0),
+            "catL4": str(ent.get("cat_l4") or ""),
+            "problemDesc": str(ent.get("problem_desc") or ""),
+            "snippet": _snippet(text, query),
+            "score": round(distance * 100, 1),
+        })
+    return hits
+
+
+def reset_audit_collection() -> bool:
+    """重导入前清空独立 collection；失败返回 False，调用方据此提示向量可能残留。"""
+    client = _client_or_none()
+    if client is None:
+        return False
+    try:
+        with _lock:
+            if client.has_collection(AUDIT_COLLECTION):
+                client.drop_collection(AUDIT_COLLECTION)
+        return True
+    except Exception:
+        return False
+
+
+def audit_collection_count() -> int:
+    """独立 collection 的条目数；向量库不可用时返回 -1 表示未知。"""
+    client = _client_or_none()
+    if client is None:
+        return -1
+    try:
+        with _lock:
+            if not client.has_collection(AUDIT_COLLECTION):
+                return 0
+            client.load_collection(AUDIT_COLLECTION)
+            stats = client.get_collection_stats(collection_name=AUDIT_COLLECTION) or {}
+            return int(stats.get("row_count") or 0)
+    except Exception:
+        return -1

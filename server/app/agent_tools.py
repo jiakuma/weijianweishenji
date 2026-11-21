@@ -27,7 +27,7 @@ from .db import (
     get_raw_settings,
     now_str,
 )
-from .search import search_hits
+from .search import recall_regulations, search_hits
 
 log = logging.getLogger("knowledge.agent")
 
@@ -219,6 +219,12 @@ def _search_docs(args: dict) -> dict:
     }
 
 
+def _recall_regulations(args: dict) -> dict:
+    """制度全量召回：返回文档级制度清单，只查制度库，不含历史审计问题条目。"""
+    limit = int(args.get("limit") or 20)
+    return recall_regulations(args["query"], limit=min(limit, 50))
+
+
 def _read_fulltext(args: dict) -> dict:
     with SessionLocal() as s:
         row = s.get(DocumentFulltext, args["docId"])
@@ -266,6 +272,23 @@ register(ToolSpec(
         "limit": {"type": "integer", "minimum": 1, "maximum": 20},
     }, "required": ["query"]},
     readonly=True, handler=_search_docs,
+))
+
+register(ToolSpec(
+    name="recall_regulations", label="召回制度清单",
+    description=(
+        "当用户想找某类制度、要列举/盘点/召回库里所有相关制度或规定时使用"
+        "（如「差旅费有哪些制度」「预算管理相关的制度都有什么」「费用报销方面有哪些规定」）。"
+        "返回文档级制度清单（docId、标题、分类、相关度、命中理由），最多 50 篇；"
+        "与 search_docs 的区别是：search_docs 返回相关切片，本工具返回完整制度清单。"
+        "只召回制度库已解析文档，不含历史审计问题条目；"
+        "助手仅做检索与提示，制度适用与定性须由审计人员复核。"
+    ),
+    parameters={"type": "object", "properties": {
+        "query": {"type": "string", "maxLength": 200},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+    }, "required": ["query"]},
+    readonly=True, handler=_recall_regulations,
 ))
 
 register(ToolSpec(

@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from .db import Chunk, Document, SessionLocal
+from .db import Category, Chunk, Document, SessionLocal
 
 
 def build_terms(q: str) -> list[str]:
@@ -191,4 +191,168 @@ def _extractive(question: str, hits: list[dict], mode: str) -> dict:
         "createdAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "recallMode": mode,
         "feedback": None,
+    }
+
+
+# ---------------------------------------------------------------- 制度全量召回（文档级）
+
+RECALL_NOTICE = "助手仅召回制度清单供参考，制度适用与定性须由审计人员复核。"
+
+
+def recall_regulations(query: str, limit: int = 20) -> dict:
+    """文档级制度召回：用户想列举/盘点某类制度时，返回完整制度清单而非碎片切片。
+
+    候选集限定为制度库已解析文档（历史审计问题存于 AuditIssue 表，天然不在其中）。
+    分类树命中给强加分；同时并入向量命中与词法命中，阈值从宽，宁可多召回。
+    返回项的 hits 结构与 search_hits 一致，可直接进入 Agent 的引用池。
+
+    Args:
+        query: 用户的制度主题问句。
+        limit: 最多返回篇数，调用方需裁剪到 1~50。
+
+    Returns:
+        {'query','total','items','hits','limitNote','notice'}。
+    """
+    question = (query or "").strip()
+    if not question:
+        return {"query": question, "total": 0, "items": [], "hits": [],
+            "limitNote": "", "notice": RECALL_NOTICE}
+    cap = max(1, min(int(limit or 20), 50))
+    terms = build_terms(question)
+    raw = question.lower()
+
+    # 1) 向量腿：取较宽的候选，按 docId 聚合
+    vector_hits: list[dict] = []
+    try:
+        from .milvus_store import search as vector_search
+        vector_hits = vector_search(question, 50)
+    except Exception:
+        vector_hits = []
+    vector_by_doc: dict[str, dict] = {}
+    for hit in vector_hits:
+        vector_by_doc.setdefault(hit["docId"], hit)
+
+    with SessionLocal() as session:
+        # 2) 候选文档：只取制度库已解析文档；防御性排除来源标注为历史问题的记录
+        docs = [d for d in session.query(Document).all()
+                if d.status == "已解析" and "历史问题" not in (d.source or "")]
+        if not docs:
+            return {"query": question, "total": 0, "items": [], "hits": [],
+                    "limitNote": "制度库暂无已解析资料。", "notice": RECALL_NOTICE}
+
+        # 3) 分类树：问题词命中分类名时，把该分类及其所有子孙纳入优先分类集合
+        cats = session.query(Category).all()
+        children_of: dict[str, list[Category]] = {}
+        for cat in cats:
+            children_of.setdefault(cat.parent_id or "", []).append(cat)
+        meaningful = [t for t in terms if len(t) >= 2]
+        cat_names: set[str] = set()
+        for cat in cats:
+            name = cat.name or ""
+            if any(term in name.lower() for term in meaningful):
+                cat_names.add(name)
+        stack = [cat.id for cat in cats if cat.name in cat_names]
+        while stack:
+            cid = stack.pop()
+            for child in children_of.get(cid, []):
+                if child.name not in cat_names:
+                    cat_names.add(child.name)
+                stack.append(child.id)
+
+        # 4) 每篇文档的前若干切片，供打分与命中片段使用
+        excerpts: dict[str, str] = {}
+        lead_chunk: dict[str, Any] = {}
+        for chunk in session.query(Chunk).order_by(Chunk.id).all():
+            bucket = lead_chunk.setdefault(chunk.doc_id, [])
+            if len(bucket) < 3:
+                bucket.append(chunk)
+
+    for doc in docs:
+        chunks = lead_chunk.get(doc.id, [])
+        text = " ".join((c.text or "")[:600] for c in chunks)
+        excerpts[doc.id] = text
+
+    scored: list[dict] = []
+    for doc in docs:
+        title = (doc.title or "").lower()
+        category = doc.category or ""
+        category_lower = category.lower()
+        keyword_text = " ".join(str(k) for k in (doc.keywords or [])).lower()
+        tag_text = " ".join(str(t) for t in (doc.tags or [])).lower()
+        summary = (doc.summary or "").lower()
+        excerpt = (excerpts.get(doc.id) or "").lower()
+        score = 0.0
+        title_hits: list[str] = []
+        for term in terms:
+            if term in title:
+                score += 8
+                title_hits.append(term)
+            if term in category_lower:
+                score += 4
+            if term in keyword_text:
+                score += 5
+            if term in tag_text:
+                score += 3
+            if term in summary:
+                score += 3
+            if term in excerpt:
+                score += 6
+        if category in cat_names:
+            score += 12  # 分类树命中是强信号
+        if raw and (raw in title or raw in excerpt):
+            score += 15
+        vector_hit = vector_by_doc.get(doc.id)
+        if vector_hit:
+            score += max(10.0, float(vector_hit.get("score") or 0) * 0.3)
+
+        if score < 8:  # 阈值从宽：单个标题 bigram 命中即可入选
+            continue
+
+        chunk = None
+        for candidate in lead_chunk.get(doc.id, []):
+            if any(term in (candidate.text or "").lower() for term in terms):
+                chunk = candidate
+                break
+        if chunk is None:
+            chunk = lead_chunk.get(doc.id, [None])[0] if lead_chunk.get(doc.id) else None
+        snippet = (vector_hit or {}).get("snippet") or snippet_of(excerpts.get(doc.id) or "", terms)
+        quote_text = re.sub(r"\s+", " ", (chunk.text if chunk else "") or snippet).strip()[:120]
+
+        reasons: list[str] = []
+        if category in cat_names:
+            reasons.append(f"分类命中「{category}」")
+        if title_hits:
+            reasons.append("标题含「" + "、".join(sorted(set(title_hits))[:3]) + "」")
+        if vector_hit:
+            reasons.append("语义相关")
+        if not reasons:
+            reasons.append("正文或摘要命中关键词")
+
+        scored.append({
+            "docId": doc.id,
+            "docTitle": doc.title,
+            "title": doc.title,
+            "category": category,
+            "score": round(score, 1),
+            "reason": "；".join(reasons),
+            "chunkId": chunk.id if chunk else "",
+            "page": chunk.page if chunk else 0,
+            "section": chunk.section if chunk else "摘要",
+            "snippet": snippet,
+            "quote": quote_text,
+        })
+
+    scored.sort(key=lambda item: (-item["score"], item["docId"]))
+    items = scored[:cap]
+    note = f"最多返回 {cap} 篇制度（上限 50）。"
+    if len(scored) > cap:
+        note += f"另有 {len(scored) - cap} 篇相关制度未列出，可缩小主题后再次召回。"
+    return {
+        "query": question,
+        "total": len(items),
+        "matched": len(scored),
+        "items": items,
+        "hits": items,  # 与 search_docs 对齐，供 Agent 引用池直接消费
+        "limitNote": note,
+        "notice": RECALL_NOTICE,
     }

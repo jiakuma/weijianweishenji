@@ -192,7 +192,10 @@ _SYSTEM_NATIVE = (
     "当用户要求审合同/看合同有没有问题/查违规时，必须直接调用 audit_contract 并把全部 tmp- ID 作为 docIds 传入；"
     "当用户要求审底稿/复核审计工作底稿/检查底稿是否规范时，必须直接调用 audit_workpaper 并把全部 tmp- ID 作为 docIds 传入；"
     "当用户要求查制度冲突/互斥时，必须直接调用 detect_conflict。不要先查导入任务，也不要回答「没收到文件」。\n"
-    "8. 不要输出 JSON 以外的任何内容。"
+    "8. 当用户想找某类制度、询问库里有哪些相关制度/规定（如「差旅费有哪些制度」「预算管理相关的制度都有什么」）时，"
+    "调用 recall_regulations 而不是 search_docs，它返回文档级制度清单；search_docs 只返回碎片切片。"
+    "助手只做检索与提示，制度适用与定性须由审计人员复核。\n"
+    "9. 不要输出 JSON 以外的任何内容。"
 )
 
 _FINAL_SYSTEM = (
@@ -218,6 +221,8 @@ _SYSTEM_JSON = (
     "当用户要求审合同/看合同有没有问题/查违规时，必须直接调用 audit_contract 并把全部 tmp- ID 作为 docIds 传入；"
     "当用户要求审底稿/复核审计工作底稿/检查底稿是否规范时，必须直接调用 audit_workpaper 并把全部 tmp- ID 作为 docIds 传入；"
     "当用户要求查制度冲突/互斥时，必须直接调用 detect_conflict。不要先查导入任务，也不要回答「没收到文件」。"
+    "当用户想找某类制度、询问库里有哪些相关制度/规定时，调用 recall_regulations 而不是 search_docs，"
+    "它返回文档级制度清单；助手只做检索与提示，制度适用与定性须由审计人员复核。"
     "不要输出 JSON 以外的任何内容。"
 )
 
@@ -577,7 +582,7 @@ def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
                     # 工具执行耗时从总超时预算中扣除：制度互斥检测等长任务不应
                     # 因自身耗时（可能 > TOTAL_TIMEOUT）拖垮整个 agent 的判定。
                     tool_time += (result.get("costMs") or 0) / 1000.0
-                    if result.get("ok") and call.name == "search_docs":
+                    if result.get("ok") and call.name in ("search_docs", "recall_regulations"):
                         for h in (result.get("data") or {}).get("hits", []):
                             if len(pool) >= MAX_POOL:
                                 break
@@ -587,7 +592,7 @@ def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
                 # 失败换路：空结果/异常时给模型明确的重试提示，连续两次则收尾
                 if confirmed != "n/a" and not result.get("ok"):
                     hints.append("该写操作未获用户同意，不要重复尝试同类操作，直接说明情况。")
-                elif result.get("ok") and call.name == "search_docs":
+                elif result.get("ok") and call.name in ("search_docs", "recall_regulations"):
                     total = (result.get("data") or {}).get("total", 0)
                     if total == 0:
                         empty_streak += 1
