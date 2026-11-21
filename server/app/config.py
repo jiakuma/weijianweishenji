@@ -77,6 +77,8 @@ class Settings:
 
     AUTH_MODE: str = _env("AUTH_MODE", "local").lower()
     JWT_SECRET_KEY: str = _env("JWT_SECRET_KEY")
+    # 本地账号首次启动的初始管理员密码；留空则随机生成并在启动日志打印一次
+    DEFAULT_ADMIN_PASSWORD: str = _env("DEFAULT_ADMIN_PASSWORD")
     SESSION_EXPIRE_SECONDS: int = _int("SESSION_EXPIRE_SECONDS", 86400)
     COOKIE_SECURE: bool = _bool("COOKIE_SECURE")
     SSO_TRIGGER_HEADER: str = _env("SSO_TRIGGER_HEADER", "eywaauth")

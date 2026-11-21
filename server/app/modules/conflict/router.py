@@ -9,9 +9,10 @@ import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 
+from ...auth.common import filter_by_owner, get_current_user, owner_id_for
 from ...db import SessionLocal, get_raw_settings, now_str
 from ...llm import llm_config
 from .models import ConflictSession, ConflictTask
@@ -92,7 +93,7 @@ def _save(t: dict) -> None:
     with SessionLocal() as s:
         row = s.get(ConflictTask, t["task_id"])
         if row is None:
-            row = ConflictTask(id=t["task_id"])
+            row = ConflictTask(id=t["task_id"], owner_id=t.get("owner_id", ""))
             s.add(row)
         row.name = t["name"]
         row.created_at = t["created_at"]
@@ -139,11 +140,18 @@ def _session_dict(s: ConflictSession) -> dict:
     }
 
 
-def _ensure_legacy_session(s) -> ConflictSession | None:
+def _ensure_legacy_session(s, user: dict) -> ConflictSession | None:
     """历史库没有任何会话但已有任务时，建一个默认会话收编，避免旧数据不可见。"""
-    if s.query(ConflictSession).count() > 0:
+    owner = owner_id_for(user)
+    query = s.query(ConflictSession)
+    if owner:
+        query = query.filter(ConflictSession.owner_id == owner)
+    if query.count() > 0:
         return None
-    task_ids = [r.id for r in s.query(ConflictTask).order_by(ConflictTask.created_at).all()]
+    tasks = s.query(ConflictTask)
+    if owner:
+        tasks = tasks.filter(ConflictTask.owner_id == owner)
+    task_ids = [r.id for r in tasks.order_by(ConflictTask.created_at).all()]
     if not task_ids:
         return None
     now = now_str()
@@ -153,6 +161,7 @@ def _ensure_legacy_session(s) -> ConflictSession | None:
         task_ids_json=json.dumps(task_ids, ensure_ascii=False),
         created_at=now,
         updated_at=now,
+        owner_id=owner,
     )
     s.add(session)
     s.commit()
@@ -160,20 +169,23 @@ def _ensure_legacy_session(s) -> ConflictSession | None:
 
 
 @router.get("/sessions")
-def list_sessions():
+def list_sessions(user: dict = Depends(get_current_user)):
     with SessionLocal() as s:
-        _ensure_legacy_session(s)
-        rows = s.query(ConflictSession).order_by(ConflictSession.updated_at.desc()).all()
+        _ensure_legacy_session(s, user)
+        rows = filter_by_owner(
+            s.query(ConflictSession), ConflictSession, user
+        ).order_by(ConflictSession.updated_at.desc()).all()
         return [_session_dict(r) for r in rows]
 
 
 @router.post("/sessions")
-def create_session():
+def create_session(user: dict = Depends(get_current_user)):
     with SessionLocal() as s:
         now = now_str()
         session = ConflictSession(
             id=uuid.uuid4().hex[:12], title="新会话",
             task_ids_json="[]", created_at=now, updated_at=now,
+            owner_id=owner_id_for(user),
         )
         s.add(session)
         s.commit()
@@ -181,10 +193,12 @@ def create_session():
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(session_id: str):
+def delete_session(session_id: str, user: dict = Depends(get_current_user)):
     removed = []
     with SessionLocal() as s:
-        session = s.get(ConflictSession, session_id)
+        session = filter_by_owner(
+            s.query(ConflictSession), ConflictSession, user
+        ).filter(ConflictSession.id == session_id).first()
         if session:
             removed = json.loads(session.task_ids_json or "[]")
             s.delete(session)
@@ -215,7 +229,16 @@ async def analyze(
     files: list[UploadFile] = File(...),
     budget: int = Form(DEFAULT_BUDGET),
     session_id: str = Form(""),
+    user: dict = Depends(get_current_user),
 ):
+    owner = owner_id_for(user)
+    if session_id:
+        with SessionLocal() as s:
+            session = filter_by_owner(
+                s.query(ConflictSession), ConflictSession, user
+            ).filter(ConflictSession.id == session_id).first()
+            if not session:
+                return JSONResponse({"error": "会话不存在"}, status_code=404)
     try:
         budget = int(budget)
     except (TypeError, ValueError):
@@ -246,6 +269,7 @@ async def analyze(
     task_id = uuid.uuid4().hex[:12]
     t = {
         "task_id": task_id,
+        "owner_id": owner,
         "name": "、".join(fn for fn, _ in uploaded[:3]) + (f" 等 {len(uploaded)} 个文件" if len(uploaded) > 3 else ""),
         "created_at": now_str(),
         "status": "pending",
@@ -268,7 +292,9 @@ async def analyze(
     _save(t)
     if session_id:
         with SessionLocal() as s:
-            session = s.get(ConflictSession, session_id)
+            session = filter_by_owner(
+                s.query(ConflictSession), ConflictSession, user
+            ).filter(ConflictSession.id == session_id).first()
             if session:
                 ids = json.loads(session.task_ids_json or "[]")
                 ids.append(task_id)
@@ -283,10 +309,11 @@ async def analyze(
 
 
 @router.get("/tasks")
-def list_tasks():
+def list_tasks(user: dict = Depends(get_current_user)):
+    owner = owner_id_for(user)
     with SessionLocal() as s:
         rows = (
-            s.query(ConflictTask)
+            filter_by_owner(s.query(ConflictTask), ConflictTask, user)
             .order_by(ConflictTask.created_at.desc(), ConflictTask.id.desc())
             .limit(100)
             .all()
@@ -294,6 +321,8 @@ def list_tasks():
         items = [_row_dict(r) for r in rows]
     index = {x["task_id"]: x for x in items}
     for tid, t in TASKS.items():
+        if owner and t.get("owner_id", "") != owner:
+            continue
         live = _task_dict(t)
         if tid in index:
             index[tid].update(live)
@@ -303,42 +332,53 @@ def list_tasks():
 
 
 @router.get("/tasks/{task_id}")
-def get_task(task_id: str):
+def get_task(task_id: str, user: dict = Depends(get_current_user)):
+    owner = owner_id_for(user)
     t = TASKS.get(task_id)
-    if t:
+    if t and (not owner or t.get("owner_id", "") == owner):
         return _task_dict(t, full=True)
     with SessionLocal() as s:
-        row = s.get(ConflictTask, task_id)
+        row = filter_by_owner(
+            s.query(ConflictTask), ConflictTask, user
+        ).filter(ConflictTask.id == task_id).first()
         if row is None:
             return JSONResponse({"error": "任务不存在或已过期"}, status_code=404)
         return _row_dict(row, full=True)
 
 
 @router.delete("/tasks/{task_id}")
-def delete_task(task_id: str):
-    TASKS.pop(task_id, None)
+def delete_task(task_id: str, user: dict = Depends(get_current_user)):
+    owner = owner_id_for(user)
+    if task_id in TASKS and (not owner or TASKS[task_id].get("owner_id", "") == owner):
+        TASKS.pop(task_id, None)
     with SessionLocal() as s:
-        row = s.get(ConflictTask, task_id)
+        row = filter_by_owner(
+            s.query(ConflictTask), ConflictTask, user
+        ).filter(ConflictTask.id == task_id).first()
+        owned = row is not None
         if row:
             s.delete(row)
-        for session in s.query(ConflictSession).all():
+        for session in filter_by_owner(s.query(ConflictSession), ConflictSession, user).all():
             ids = json.loads(session.task_ids_json or "[]")
             if task_id in ids:
                 ids.remove(task_id)
                 session.task_ids_json = json.dumps(ids, ensure_ascii=False)
         s.commit()
     # 同步清理归一化中间产物（units/clauses/candidates/coverage）
-    if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", task_id):
+    if owned and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", task_id):
         shutil.rmtree(DATA_DIR / task_id, ignore_errors=True)
     return {"ok": True}
 
 
-def _full_task(task_id: str) -> dict | None:
+def _full_task(task_id: str, user: dict) -> dict | None:
+    owner = owner_id_for(user)
     t = TASKS.get(task_id)
-    if t:
+    if t and (not owner or t.get("owner_id", "") == owner):
         return _task_dict(t, full=True)
     with SessionLocal() as s:
-        row = s.get(ConflictTask, task_id)
+        row = filter_by_owner(
+            s.query(ConflictTask), ConflictTask, user
+        ).filter(ConflictTask.id == task_id).first()
         return _row_dict(row, full=True) if row else None
 
 
@@ -412,8 +452,8 @@ def _markdown(d: dict) -> str:
 
 
 @router.get("/tasks/{task_id}/export")
-def export_task(task_id: str):
-    d = _full_task(task_id)
+def export_task(task_id: str, user: dict = Depends(get_current_user)):
+    d = _full_task(task_id, user)
     if d is None:
         return JSONResponse({"error": "任务不存在"}, status_code=404)
     content = _markdown(d)

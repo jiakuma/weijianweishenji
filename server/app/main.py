@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -59,6 +59,7 @@ from .db import (
     SessionLocal,
     AssistantUpload,
     TEMP_UPLOAD_DIR,
+    User,
     purge_assistant_uploads,
     category_to_dict,
     doc_to_dict,
@@ -74,6 +75,17 @@ from .db import (
     sha256_file,
     task_to_dict,
 )
+from .auth.common import (
+    bind_owner_id,
+    filter_by_owner,
+    get_current_user,
+    owner_id_for,
+    reset_owner_id,
+    user_to_dict,
+    verify_token,
+)
+from .auth.routes import router as auth_router
+from .users.routes import router as users_router
 from .search import search_hits
 from .qa import answer_question
 from . import agent_run, agent_tools, evaluation, zhihu_login
@@ -304,33 +316,69 @@ app.add_middleware(
 
 install_modules(app)
 register_exception_handlers(app)
+app.include_router(auth_router)
+app.include_router(users_router)
 
-# 鉴权模式二选一：sso 用中台统一认证，local 保留本机令牌（仅开发验证）
+# 鉴权模式二选一：sso 用中台统一认证，local 用平台自建账号 JWT
 if settings.is_sso:
     from .auth import register_auth_middleware
     register_auth_middleware(app)
 
-_LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+LOCAL_AUTH_EXEMPT = set(settings.AUTH_EXEMPT_PATHS) | {"/api/auth/login"}
+MUST_CHANGE_EXEMPT = {"/api/auth/change-password", "/api/auth/me"}
 
 
-async def write_access_guard(request: Request, call_next):
-    """本机降级鉴权：写接口需令牌；未配令牌时只允许本机写入。"""
-    if request.method in ("GET", "HEAD", "OPTIONS"):
+def _local_unauthorized() -> JSONResponse:
+    """与 errors.py 的 UnauthorizedError handler 保持同一响应格式。"""
+    return JSONResponse(
+        {"error": {"code": "UNAUTHORIZED", "message": "未登录或登录已失效"}},
+        status_code=401,
+    )
+
+
+async def local_access_guard(request: Request, call_next):
+    """本地账号鉴权：仅拦截 /api/ 请求，前端页面与静态资源一律放行。
+
+    登录态走 X-Access-Token 请求头（兼容 uinfo cookie），不启用 cookie 承载，
+    因此 CORSMiddleware 的 allow_credentials 在 local 模式保持关闭。
+    """
+    path = request.url.path
+    if request.method == "OPTIONS" or not path.startswith("/api/"):
         return await call_next(request)
-    with SessionLocal() as s:
-        token = str(get_raw_settings(s).get("accessToken") or "").strip()
-    if token:
-        if request.headers.get("x-access-token") != token:
-            return JSONResponse(status_code=401, content={"detail": "需要有效的访问令牌"})
-    else:
-        host = request.client.host if request.client else ""
-        if host not in _LOCAL_HOSTS:
-            return JSONResponse(status_code=403, content={"detail": "未配置访问令牌时仅允许本机写入"})
-    return await call_next(request)
+    if path in LOCAL_AUTH_EXEMPT:
+        return await call_next(request)
+
+    token = request.headers.get("X-Access-Token") or request.cookies.get("uinfo", "")
+    payload = verify_token(token)
+    subject = str(payload.get("sub") or "") if payload else ""
+    if not subject:
+        return _local_unauthorized()
+    with SessionLocal() as session:
+        user = session.get(User, subject)
+        if user is None or not user.enabled:
+            return _local_unauthorized()
+        current = user_to_dict(user)
+        must_change = bool(user.must_change_password)
+
+    if must_change and path not in MUST_CHANGE_EXEMPT:
+        return JSONResponse(
+            {"error": {
+                "code": "MUST_CHANGE_PASSWORD",
+                "message": "首次登录或密码被重置，请先修改密码",
+            }},
+            status_code=403,
+        )
+
+    request.scope.setdefault("state", {})["current_user"] = current
+    owner_token = bind_owner_id(current["id"])
+    try:
+        return await call_next(request)
+    finally:
+        reset_owner_id(owner_token)
 
 
 if not settings.is_sso:
-    app.middleware("http")(write_access_guard)
+    app.middleware("http")(local_access_guard)
 
 
 # ---------------------------------------------------------------- 基础
@@ -965,6 +1013,7 @@ ASSISTANT_TEMP_TTL_HOURS = 24  # 过期临时附件在下次上传时顺带清�
 async def upload_assistant_files(
     files: list[UploadFile] = File(...),
     session_id: str = Form(""),
+    user: dict = Depends(get_current_user),
 ):
     """智能助手回形针上传：文件只落在临时区，绝不进入资料库。
 
@@ -972,8 +1021,11 @@ async def upload_assistant_files(
     不解析切片、不写全文，因此资料库列表与知识检索都看不到这些文件。
     返回的 id 为 tmp-xxx，随问题文本传给 detect_conflict 工具读取原始字节。
     """
+    owner = owner_id_for(user)
     # 借每次上传顺带回收过期临时文件，避免无限堆积
-    purge_assistant_uploads(max_age_hours=ASSISTANT_TEMP_TTL_HOURS)
+    purge_assistant_uploads(max_age_hours=ASSISTANT_TEMP_TTL_HOURS, owner_id=owner)
+    with SessionLocal() as s:
+        _ensure_session_owner(s, session_id, user)
     created = []
     for f in files:
         original = f.filename or "未命名文件"
@@ -995,6 +1047,7 @@ async def upload_assistant_files(
                 stored_path=str(stored),
                 size_bytes=len(content),
                 created_at=now_str(),
+                owner_id=owner,
             )
             s.add(row)
             s.commit()
@@ -1179,7 +1232,18 @@ def _file_names_from_question(question: str) -> list[str]:
     return names
 
 
-def _persist_qa(result: dict, session_id: str, qa_id: str = "") -> str:
+def _ensure_session_owner(session, session_id: str, user: dict) -> QASession | None:
+    """校验会话归属；跨用户访问按「不存在」处理，不泄漏他人会话。"""
+    if not session_id:
+        return None
+    row = session.get(QASession, session_id)
+    owner = owner_id_for(user)
+    if row is None or (owner and (row.owner_id or "") != owner):
+        raise NotFoundError("会话不存在")
+    return row
+
+
+def _persist_qa(result: dict, session_id: str, qa_id: str = "", owner_id: str = "") -> str:
     """问答入库 + 挂到会话。被同步问答与智能体流共用。
 
     传 qa_id 时更新已有占位记录（智能体流开始时先落库一条 running 占位），
@@ -1241,7 +1305,7 @@ def _persist_qa(result: dict, session_id: str, qa_id: str = "") -> str:
         if row is None:
             row = QARow(id=qa_id or uid("q"), question=result["question"], answer=stored_answer,
                         citations=result["citations"], created_at=result["createdAt"],
-                        recall_mode=result["recallMode"], feedback="")
+                        recall_mode=result["recallMode"], feedback="", owner_id=owner_id)
             s.add(row)
         else:
             row.question = result["question"]
@@ -1263,7 +1327,8 @@ def _persist_qa(result: dict, session_id: str, qa_id: str = "") -> str:
         return row.id
 
 
-def _persist_placeholder(question: str, session_id: str, run_id: str) -> str:
+def _persist_placeholder(question: str, session_id: str, run_id: str,
+                         owner_id: str = "") -> str:
     """智能体流开跑前先落一条 running 占位记录并挂到会话，返回 qa_id。"""
     created_at = now_str()
     qa_id = uid("q")
@@ -1275,7 +1340,8 @@ def _persist_placeholder(question: str, session_id: str, run_id: str) -> str:
     }
     with SessionLocal() as s:
         s.add(QARow(id=qa_id, question=question, answer=answer,
-                    citations=[], created_at=created_at, recall_mode="混合", feedback=""))
+                    citations=[], created_at=created_at, recall_mode="混合", feedback="",
+                    owner_id=owner_id))
         session = s.get(QASession, session_id) if session_id else None
         if session:
             seq = s.query(QASessionItem).filter(QASessionItem.session_id == session.id).count()
@@ -1309,9 +1375,12 @@ def _finalize_placeholder(qa_id: str, status: str, message: str) -> None:
 
 
 @app.post("/api/qa/ask")
-def ask_question(body: AskBody):
+def ask_question(body: AskBody, user: dict = Depends(get_current_user)):
+    owner = owner_id_for(user)
+    with SessionLocal() as s:
+        _ensure_session_owner(s, body.sessionId, user)
     result = answer_question(body.question.strip(), body.mode)
-    result["id"] = _persist_qa(result, body.sessionId)
+    result["id"] = _persist_qa(result, body.sessionId, owner_id=owner)
     return result
 
 
@@ -1390,8 +1459,11 @@ def _emit_progress(task_ids: list[str], emit) -> None:
 
 
 @app.post("/api/qa/agent/stream")
-def agent_stream(body: AskBody):
+def agent_stream(body: AskBody, user: dict = Depends(get_current_user)):
     """SSE：每完成一次工具调用推一条 step，写动作先推 confirm 挂起等确认，结束时推 done。"""
+    owner = owner_id_for(user)
+    with SessionLocal() as s:
+        _ensure_session_owner(s, body.sessionId, user)
     run_id = uid("r")
     events: queue.Queue = queue.Queue()
     task_ids: list[str] = []
@@ -1413,10 +1485,12 @@ def agent_stream(body: AskBody):
 
     def worker() -> None:
         ptoken = agent_tools.bind_progress(lambda p: emit({**p, "runId": run_id}))
+        owner_token = bind_owner_id(owner)  # 新线程不继承 contextvar，显式绑定数据归属人
         qa_id = ""
         try:
             # 开跑前先落 running 占位并挂会话，切页面/刷新后也能读到这条
-            qa_id = _persist_placeholder(body.question.strip(), body.sessionId, run_id)
+            qa_id = _persist_placeholder(body.question.strip(), body.sessionId, run_id,
+                                         owner_id=owner)
             emit({"type": "start", "runId": run_id, "qaId": qa_id})
             result = agent_run.run_agent(
                 body.question.strip(), body.mode, run_id, body.sessionId,
@@ -1435,7 +1509,7 @@ def agent_stream(body: AskBody):
             _emit_progress(task_ids, emit)
             emit({"type": "status", "runId": run_id, "steps": result.get("agentSteps", 0)})
             result["status"] = "done"
-            result["id"] = _persist_qa(result, body.sessionId, qa_id=qa_id)
+            result["id"] = _persist_qa(result, body.sessionId, qa_id=qa_id, owner_id=owner)
             emit({"type": "done", "runId": run_id, "result": result})
         except Exception as exc:
             msg = f"智能体运行失败：{type(exc).__name__}"
@@ -1443,6 +1517,7 @@ def agent_stream(body: AskBody):
             emit({"type": "error", "runId": run_id, "message": msg, "qaId": qa_id})
         finally:
             agent_tools.reset_progress(ptoken)
+            reset_owner_id(owner_token)
             agent_run.clear_cancel(run_id)
             events.put(None)
 
@@ -1535,10 +1610,10 @@ def eval_runs():
 
 
 @app.get("/api/qa/sessions")
-def list_sessions(module: str = ""):
+def list_sessions(module: str = "", user: dict = Depends(get_current_user)):
     with SessionLocal() as s:
         out = []
-        query = s.query(QASession)
+        query = filter_by_owner(s.query(QASession), QASession, user)
         if module:
             query = query.filter(QASession.module == module)
         for session in query.order_by(QASession.updated_at.desc()).all():
@@ -1557,18 +1632,22 @@ class SessionBody(BaseModel):
 
 
 @app.post("/api/qa/sessions")
-def create_session(body: SessionBody | None = None):
+def create_session(body: SessionBody | None = None,
+                   user: dict = Depends(get_current_user)):
     module = (body.module if body else "assistant") or "assistant"
     with SessionLocal() as s:
         now = now_str()
-        session = QASession(id=uid("s"), title="", created_at=now, updated_at=now, module=module)
+        session = QASession(id=uid("s"), title="", created_at=now, updated_at=now,
+                            module=module, owner_id=owner_id_for(user))
         s.add(session)
         s.commit()
         return session_to_dict(session)
 
 
 @app.delete("/api/qa/sessions/{session_id}")
-def delete_session(session_id: str):
+def delete_session(session_id: str, user: dict = Depends(get_current_user)):
+    with SessionLocal() as s:
+        _ensure_session_owner(s, session_id, user)
     # 会话删除时一并回收该会话的助手临时附件（报告仍留在 ConflictTask 中）
     purge_assistant_uploads(session_id=session_id)
     with SessionLocal() as s:
@@ -1579,8 +1658,9 @@ def delete_session(session_id: str):
 
 
 @app.get("/api/qa/sessions/{session_id}")
-def get_session(session_id: str):
+def get_session(session_id: str, user: dict = Depends(get_current_user)):
     with SessionLocal() as s:
+        _ensure_session_owner(s, session_id, user)
         items = (s.query(QASessionItem).filter(QASessionItem.session_id == session_id)
                  .order_by(QASessionItem.seq).all())
         return [qa_to_dict(q) for q in
@@ -1588,9 +1668,10 @@ def get_session(session_id: str):
 
 
 @app.get("/api/qa")
-def list_qa():
+def list_qa(user: dict = Depends(get_current_user)):
     with SessionLocal() as s:
-        return [qa_to_dict(q) for q in s.query(QARow).order_by(QARow.created_at.desc()).all()]
+        query = filter_by_owner(s.query(QARow), QARow, user)
+        return [qa_to_dict(q) for q in query.order_by(QARow.created_at.desc()).all()]
 
 
 @app.post("/api/qa/{qa_id}/feedback")

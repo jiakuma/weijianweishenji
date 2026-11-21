@@ -22,3 +22,4 @@ class ContractTask(Base):
     files_json = Column(Text, default="[]")
     report_json = Column(Text, default="{}")
     error = Column(String, default="")
+    owner_id = Column(String, index=True, default="")

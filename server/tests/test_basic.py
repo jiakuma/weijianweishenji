@@ -15,8 +15,8 @@ def test_health_alias(client):
     assert client.get("/health").json()["status"] == "OK"
 
 
-def test_modules_route(client):
-    r = client.get("/api/modules")
+def test_modules_route(client, admin_headers):
+    r = client.get("/api/modules", headers=admin_headers)
     assert r.status_code == 200
     assert isinstance(r.json(), list)
 

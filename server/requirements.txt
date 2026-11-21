@@ -10,6 +10,7 @@ python-dotenv>=1.0
 httpx>=0.27
 python-multipart>=0.0.20
 PyJWT>=2.8
+bcrypt>=3.2
 
 # ===== 文档解析与向量检索（业务必需，场景裁剪保留）=====
 pypdf>=5.0

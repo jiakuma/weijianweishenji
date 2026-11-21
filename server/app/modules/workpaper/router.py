@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 
+from ...auth.common import filter_by_owner, get_current_user
 from ...db import SessionLocal
 from .models import WorkpaperTask
 
@@ -50,17 +51,19 @@ def _markdown(report: dict, name: str) -> str:
 
 
 @router.get("/tasks")
-def list_tasks():
+def list_tasks(user: dict = Depends(get_current_user)):
     with SessionLocal() as s:
-        rows = (s.query(WorkpaperTask).order_by(WorkpaperTask.created_at.desc()).limit(50).all())
+        rows = (filter_by_owner(s.query(WorkpaperTask), WorkpaperTask, user)
+                .order_by(WorkpaperTask.created_at.desc()).limit(50).all())
         return [{"id": r.id, "name": r.name, "createdAt": r.created_at, "status": r.status,
                  "unitCount": r.unit_count, "issueCount": r.issue_count} for r in rows]
 
 
 @router.get("/tasks/{task_id}")
-def get_task(task_id: str):
+def get_task(task_id: str, user: dict = Depends(get_current_user)):
     with SessionLocal() as s:
-        r = s.get(WorkpaperTask, task_id)
+        r = (filter_by_owner(s.query(WorkpaperTask), WorkpaperTask, user)
+             .filter(WorkpaperTask.id == task_id).first())
         if not r:
             return {"found": False}
         return {"found": True, "id": r.id, "name": r.name, "createdAt": r.created_at,
@@ -68,9 +71,10 @@ def get_task(task_id: str):
 
 
 @router.delete("/tasks/{task_id}")
-def delete_task(task_id: str):
+def delete_task(task_id: str, user: dict = Depends(get_current_user)):
     with SessionLocal() as s:
-        r = s.get(WorkpaperTask, task_id)
+        r = (filter_by_owner(s.query(WorkpaperTask), WorkpaperTask, user)
+             .filter(WorkpaperTask.id == task_id).first())
         if r:
             s.delete(r)
             s.commit()
@@ -78,9 +82,10 @@ def delete_task(task_id: str):
 
 
 @router.get("/tasks/{task_id}/export")
-def export_report(task_id: str):
+def export_report(task_id: str, user: dict = Depends(get_current_user)):
     with SessionLocal() as s:
-        r = s.get(WorkpaperTask, task_id)
+        r = (filter_by_owner(s.query(WorkpaperTask), WorkpaperTask, user)
+             .filter(WorkpaperTask.id == task_id).first())
         if not r:
             return Response("审计记录不存在", status_code=404)
         report = json.loads(r.report_json or "{}")

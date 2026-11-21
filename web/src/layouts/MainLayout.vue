@@ -42,6 +42,20 @@
         </el-button>
         <!-- 顶栏是整个系统的门面：固定为平台标识，模块名称与功能留在左侧导航和主工作区 -->
         <span class="topbar-title">{{ t('app.name') }}</span>
+        <div class="topbar-right">
+          <span class="topbar-user">{{ auth.currentUser?.displayName || auth.currentUser?.username || '' }}</span>
+          <el-dropdown trigger="click" @command="onUserCommand">
+            <el-button text size="small" class="topbar-user-btn">
+              账户 <el-icon><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="password">修改密码</el-dropdown-item>
+                <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
       </header>
 
       <main class="main-scroll" :class="{ 'is-chat': isQa }">
@@ -126,9 +140,10 @@ import { computed, onMounted, onUnmounted, ref, watch, type Component } from 'vu
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ChatDotRound, Collection, Document, FolderOpened, Menu, Plus, Setting } from '@element-plus/icons-vue'
+import { ChatDotRound, ArrowDown, Collection, Document, FolderOpened, Menu, Plus, Setting, UserFilled } from '@element-plus/icons-vue'
 import KnowledgeMap from '@/components/KnowledgeMap.vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
+import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api'
 import { fallbackModules, moduleIcons } from '@/modules'
 import type { AuditModule } from '@/types'
@@ -145,6 +160,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const store = useKnowledgeStore()
+const auth = useAuthStore()
 const mobileNav = ref(false)
 const modules = ref<AuditModule[]>(fallbackModules)
 
@@ -177,20 +193,31 @@ const assistantModules = computed<NavItem[]>(() => {
   return items
 })
 
-const navGroups = computed(() => [
-  {
-    label: t('nav.groupAudit'),
-    items: assistantModules.value,
-  },
-  {
-    label: t('nav.groupBasic'),
-    items: [
-      { key: 'library', label: t('nav.library'), path: '/library', icon: FolderOpened, enabled: true },
-      { key: 'issues', label: t('nav.issues'), path: '/issues', icon: Collection, enabled: true },
-      { key: 'settings', label: t('nav.settings'), path: '/settings', icon: Setting, enabled: true },
-    ] as NavItem[],
-  },
-])
+const navGroups = computed(() => {
+  const basic: NavItem[] = [
+    { key: 'library', label: t('nav.library'), path: '/library', icon: FolderOpened, enabled: true },
+    { key: 'issues', label: t('nav.issues'), path: '/issues', icon: Collection, enabled: true },
+    { key: 'settings', label: t('nav.settings'), path: '/settings', icon: Setting, enabled: true },
+  ]
+  if (auth.isAdmin) {
+    basic.push({ key: 'users', label: '用户管理', path: '/users', icon: UserFilled, enabled: true })
+  }
+  return [
+    { label: t('nav.groupAudit'), items: assistantModules.value },
+    { label: t('nav.groupBasic'), items: basic },
+  ]
+})
+
+async function onUserCommand(command: string): Promise<void> {
+  if (command === 'password') {
+    await router.push('/change-password')
+    return
+  }
+  if (command === 'logout') {
+    await auth.logout()
+    await router.replace('/login')
+  }
+}
 
 async function pickSession(id: string) {
   store.requestQaSessionSwitch(id, currentModule.value)
@@ -230,6 +257,7 @@ function onMobileNav(item: NavItem) {
 }
 
 onMounted(async () => {
+  await auth.fetchMe()
   await store.loadAll()
   if (!store.backendReady) {
     ElMessage.error('后端未连接，请在 server 目录运行 python run.py（端口 5281）')
@@ -250,3 +278,9 @@ watch(currentModule, (m) => {
 
 onUnmounted(() => store.stopPolling())
 </script>
+
+<style scoped>
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.topbar-user { font-size: 13px; color: var(--sub); white-space: nowrap; }
+.topbar-user-btn { color: var(--sub); }
+</style>

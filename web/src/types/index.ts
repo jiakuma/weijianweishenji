@@ -1,3 +1,28 @@
+export type UserRole = 'admin' | 'user'
+export type UserId = string | number
+
+export interface AuthUser {
+  id: UserId
+  username: string
+  displayName: string
+  role: UserRole
+  mustChangePassword?: boolean
+}
+
+export interface LoginResult {
+  token: string
+  user: AuthUser
+}
+
+export interface UserInfoRow {
+  id: UserId
+  username: string
+  displayName: string
+  role: UserRole
+  enabled: boolean
+  lastLoginAt: string | null
+}
+
 export type FileFormat = 'PDF' | 'DOCX' | 'PPTX' | 'MD' | 'TXT' | '网页' | '图片'
 export type SourceType = '本地文件' | '微信文件' | '分享链接' | '网页链接'
 export type TaskStatus = '等待中' | '解析中' | '已完成' | '失败' | '重复跳过'

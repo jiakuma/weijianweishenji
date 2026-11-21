@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 
 from ... import agent_tools
+from ...auth.common import get_owner_id
 from ...db import AssistantUpload, Document, DocumentFile, SessionLocal, now_str
 from ...llm import llm_config
 from .models import WorkpaperTask
@@ -22,9 +23,12 @@ _PROGRESS_KEYS = {"stage", "done", "total"}
 
 def _load_uploaded(doc_ids: list[str]) -> tuple[list[tuple[str, bytes]], list[str]]:
     uploaded, missing = [], []
+    owner = get_owner_id()
     with SessionLocal() as s:
         for did in doc_ids:
             tmp = s.get(AssistantUpload, did)
+            if tmp and owner and (tmp.owner_id or "") != owner:
+                tmp = None
             if tmp:
                 p = Path(tmp.stored_path) if tmp.stored_path else None
                 if not p or not p.exists():
@@ -77,7 +81,7 @@ def _persist(task, report):
         with SessionLocal() as s:
             row = s.get(WorkpaperTask, task["task_id"])
             if row is None:
-                row = WorkpaperTask(id=task["task_id"])
+                row = WorkpaperTask(id=task["task_id"], owner_id=get_owner_id())
                 s.add(row)
             row.name = task["name"]
             row.created_at = task["created_at"]
@@ -135,6 +139,7 @@ def detect(args: dict) -> dict:
         _LAST_RESULT["task_id"] = task["task_id"]
         _LAST_RESULT["report"] = report
         _LAST_RESULT["name"] = task["name"]
+        _LAST_RESULT["owner_id"] = get_owner_id()
     if emit:
         try:
             emit({"kind": "workpaper_done", "taskId": task["task_id"], "totalIssues": total_issues})
@@ -157,22 +162,26 @@ def get_result(args: dict) -> dict:
     with _LAST_LOCK:
         cached = dict(_LAST_RESULT)
     report, name = None, ""
+    owner = get_owner_id()
     if task_id:
         with SessionLocal() as s:
             row = s.get(WorkpaperTask, task_id)
-            if row:
+            if row and (not owner or (row.owner_id or "") == owner):
                 report = json.loads(row.report_json or "{}")
                 name = row.name
-        if report is None and cached.get("task_id") == task_id:
+        if (report is None and cached.get("task_id") == task_id
+                and (not owner or cached.get("owner_id", "") == owner)):
             report, name = cached.get("report"), cached.get("name", "")
         if report is None:
             return {"ok": False, "error": "找不到该底稿审核记录"}
-    elif cached.get("report"):
+    elif cached.get("report") and (not owner or cached.get("owner_id", "") == owner):
         report, name = cached.get("report"), cached.get("name", "")
     else:
         with SessionLocal() as s:
-            row = (s.query(WorkpaperTask).filter(WorkpaperTask.status == "done")
-                   .order_by(WorkpaperTask.created_at.desc()).first())
+            query = s.query(WorkpaperTask).filter(WorkpaperTask.status == "done")
+            if owner:
+                query = query.filter(WorkpaperTask.owner_id == owner)
+            row = query.order_by(WorkpaperTask.created_at.desc()).first()
             if not row:
                 return {"ok": False, "error": "还没有做过底稿审核"}
             report, name = json.loads(row.report_json or "{}"), row.name

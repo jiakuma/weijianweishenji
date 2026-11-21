@@ -47,6 +47,17 @@ class UnauthorizedError(Exception):
         super().__init__(message)
 
 
+class ForbiddenError(Exception):
+    """已登录但权限不足（403）。"""
+
+    def __init__(self, message: str = "没有权限执行该操作", detail: Any = None,
+                 code: str = "FORBIDDEN"):
+        self.message = message
+        self.detail = detail
+        self.code = code
+        super().__init__(message)
+
+
 def _payload(code: str, message: str, detail: Any = None) -> dict:
     body: dict[str, Any] = {"code": code, "message": message}
     if detail is not None:
@@ -68,6 +79,12 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(UnauthorizedError)
     async def _unauthorized(_: Request, exc: UnauthorizedError):
         return JSONResponse(_payload("UNAUTHORIZED", exc.message, exc.detail), status_code=401)
+
+    @app.exception_handler(ForbiddenError)
+    async def _forbidden(_: Request, exc: ForbiddenError):
+        return JSONResponse(
+            _payload(exc.code, exc.message, exc.detail), status_code=403
+        )
 
     @app.exception_handler(AppError)
     async def _app_error(_: Request, exc: AppError):

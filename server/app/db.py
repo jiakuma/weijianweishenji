@@ -46,6 +46,20 @@ if settings.is_postgres:
     Base.metadata.schema = settings.DB_SCHEMA
 
 
+class User(Base):
+    """本地账号：AUTH_MODE=local 时用于登录、鉴权与个人数据归属。"""
+    __tablename__ = "users"
+    id = Column(String, primary_key=True)
+    username = Column(String, nullable=False, unique=True, index=True)
+    display_name = Column(String, default="")
+    password_hash = Column(String, nullable=False, default="")  # bcrypt，绝不存明文
+    role = Column(String, default="user", index=True)          # admin / user
+    enabled = Column(Boolean, default=True)
+    must_change_password = Column(Boolean, default=False)
+    created_at = Column(String, default="")
+    last_login_at = Column(String, nullable=True)
+
+
 class Document(Base):
     __tablename__ = "documents"
     id = Column(String, primary_key=True)
@@ -115,6 +129,7 @@ class QARow(Base):
     created_at = Column(String, default="")
     recall_mode = Column(String, default="混合")
     feedback = Column(String, default="")
+    owner_id = Column(String, index=True, default="")
 
 
 class QASession(Base):
@@ -128,6 +143,7 @@ class QASession(Base):
     created_at = Column(String, default="")
     updated_at = Column(String, default="")
     module = Column(String, default="assistant")
+    owner_id = Column(String, index=True, default="")
 
 
 class QASessionItem(Base):
@@ -244,6 +260,7 @@ class AssistantUpload(Base):
     stored_path = Column(String, default="")       # TEMP_UPLOAD_DIR 下的绝对路径
     size_bytes = Column(Integer, default=0)
     created_at = Column(String, default="")
+    owner_id = Column(String, index=True, default="")
 
 
 class AuditIssue(Base):
@@ -319,12 +336,14 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def purge_assistant_uploads(session_id: str = "", max_age_hours: int | None = None) -> int:
-    """清理助手临时附件：按会话和/或过期时间删除登记行与磁盘文件。
+def purge_assistant_uploads(session_id: str = "", max_age_hours: int | None = None,
+                            owner_id: str = "") -> int:
+    """清理助手临时附件：按会话、归属人和/或过期时间删除登记行与磁盘文件。
 
     Args:
         session_id: 非空时只清理该会话的附件。
         max_age_hours: 非空时只清理创建时间早于该阈值的附件。
+        owner_id: 非空时只清理该用户的附件，避免跨用户误删。
 
     Returns:
         实际删除的附件数量。
@@ -334,6 +353,8 @@ def purge_assistant_uploads(session_id: str = "", max_age_hours: int | None = No
     removed = 0
     with SessionLocal() as s:
         query = s.query(AssistantUpload)
+        if owner_id:
+            query = query.filter(AssistantUpload.owner_id == owner_id)
         if session_id:
             query = query.filter(AssistantUpload.session_id == session_id)
         if max_age_hours is not None:
@@ -551,12 +572,119 @@ def session_to_dict(s: QASession, count: int = 0, last_question: str = "") -> di
     }
 
 
+# 归属人列：这些表存放个人或个人任务数据，资料库（documents/chunks/audit_issues）不在此列
+OWNER_TABLES = (
+    "qa_sessions",
+    "qa_history",
+    "assistant_uploads",
+    "audit_conflict_sessions",
+    "audit_conflict_tasks",
+    "audit_contract_tasks",
+    "audit_workpaper_tasks",
+)
+
+
+def _ensure_owner_columns_sqlite(session) -> None:
+    """SQLite 旧库按 checkfirst 追加归属列；不触碰已有列与数据。"""
+    for table in OWNER_TABLES:
+        cols = {r[1] for r in session.execute(text(f"PRAGMA table_info({table})"))}
+        if cols and "owner_id" not in cols:
+            session.execute(text(f"ALTER TABLE {table} ADD COLUMN owner_id VARCHAR DEFAULT ''"))
+        if cols:
+            session.execute(text(
+                f"CREATE INDEX IF NOT EXISTS ix_{table}_owner_id ON {table}(owner_id)"))
+
+
+def _ensure_owner_columns_postgres() -> None:
+    """PG 结构变更走原生幂等 DDL；项目尚无 Alembic revision，沿用 checkfirst 兜底约定。"""
+    import logging
+    for table in OWNER_TABLES:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    f'ALTER TABLE "{settings.DB_SCHEMA}"."{table}" '
+                    "ADD COLUMN IF NOT EXISTS owner_id VARCHAR DEFAULT ''"
+                ))
+                conn.execute(text(
+                    f'CREATE INDEX IF NOT EXISTS ix_{table}_owner_id '
+                    f'ON "{settings.DB_SCHEMA}"."{table}" (owner_id)'
+                ))
+        except Exception as exc:
+            # 表尚未由迁移建立时跳过，不阻断启动；正式 revision 落地后此段即为幂等空操作
+            logging.getLogger("app").warning("owner_id 补齐失败 table=%s: %s", table, exc)
+
+
+def seed_admin() -> None:
+    """首次启动初始化管理员，并把存量个人数据挂到管理员名下。"""
+    import logging
+    import secrets
+    import uuid
+
+    import bcrypt
+    from sqlalchemy import or_
+
+    with SessionLocal() as session:
+        admin = session.query(User).filter(User.username == "admin").first()
+        random_password = ""
+        if session.query(User).count() == 0:
+            random_password = settings.DEFAULT_ADMIN_PASSWORD.strip() or secrets.token_urlsafe(12)
+            admin = User(
+                id=f"user-{uuid.uuid4().hex[:12]}",
+                username="admin",
+                display_name="管理员",
+                password_hash=bcrypt.hashpw(
+                    random_password.encode("utf-8"), bcrypt.gensalt()
+                ).decode("ascii"),
+                role="admin",
+                enabled=True,
+                must_change_password=True,
+                created_at=now_str(),
+            )
+            session.add(admin)
+            session.commit()
+            if not settings.DEFAULT_ADMIN_PASSWORD.strip():
+                logger = logging.getLogger("app")
+                logger.warning("=" * 72)
+                logger.warning("本地账号已初始化：用户名 admin，随机密码 %s", random_password)
+                logger.warning("该密码仅打印这一次，请立即登录后修改。")
+                logger.warning("=" * 72)
+        if admin is None:
+            # 用户表已有数据但没有 admin（外部导入场景）：取首位用户承接存量数据
+            admin = session.query(User).order_by(User.created_at).first()
+        if admin is None:
+            return
+        for model in (
+            QASession, QARow, AssistantUpload,
+            _owner_model("conflict", "ConflictSession"),
+            _owner_model("conflict", "ConflictTask"),
+            _owner_model("contract", "ContractTask"),
+            _owner_model("workpaper", "WorkpaperTask"),
+        ):
+            if model is None:
+                continue
+            session.query(model).filter(
+                or_(model.owner_id.is_(None), model.owner_id == "")
+            ).update({model.owner_id: admin.id}, synchronize_session=False)
+        session.commit()
+
+
+def _owner_model(module: str, class_name: str):
+    """延迟加载模块表，避免 db.py 与业务模块 models 形成循环导入。"""
+    try:
+        module_obj = __import__(f"{__package__}.modules.{module}.models", fromlist=[class_name])
+        return getattr(module_obj, class_name, None)
+    except Exception:
+        return None
+
+
 def init_db() -> None:
     if settings.is_postgres:
         # 标准栈：结构变更只走 Alembic，禁止 create_all
         from .run_migrations import ensure_schema_sync, run_migrations
         ensure_schema_sync()
         run_migrations()
+        User.__table__.create(bind=engine, checkfirst=True)
+        _ensure_owner_columns_postgres()
     else:
         # 本地降级路径保留原有建表行为，仅用于开发验证
         Base.metadata.create_all(engine)
@@ -578,8 +706,9 @@ def init_db() -> None:
                     session.execute(__import__("sqlalchemy").text(f"ALTER TABLE import_tasks ADD COLUMN {name} {ddl}"))
             qa_cols = {r[1] for r in session.execute(__import__("sqlalchemy").text("PRAGMA table_info(qa_sessions)"))}
             if "module" not in qa_cols:
-                session.execute(__import__("sqlalchemy").text(
+                session.execute(text(
                     "ALTER TABLE qa_sessions ADD COLUMN module VARCHAR DEFAULT 'assistant'"))
+            _ensure_owner_columns_sqlite(session)
             session.commit()
     with SessionLocal() as session:
         for key, value in DEFAULT_SETTINGS.items():
@@ -639,3 +768,6 @@ def init_db() -> None:
     except Exception as exc:  # 记录告警，不静默吞；不影响平台其余部分启动
         import logging
         logging.getLogger("app").warning("audit_issues 表检查失败：%s", exc)
+
+    # 账号与存量数据归属：无用户时建 admin，历史会话/上传/报告统一挂到 admin
+    seed_admin()

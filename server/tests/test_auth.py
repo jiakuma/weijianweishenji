@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
-"""认证相关测试：JWT 工具、配置 fail-fast、本地降级行为。"""
+"""认证相关测试：JWT 工具、配置 fail-fast、本地账号与数据隔离。"""
 from __future__ import annotations
 
+import uuid
+
+import bcrypt
 import pytest
+
+from conftest import TEST_PASSWORD
 
 
 def test_jwt_roundtrip(monkeypatch):
@@ -36,3 +41,245 @@ def test_sso_config_fail_fast(monkeypatch):
 
 def test_local_health_still_open(client):
     assert client.get("/api/health").status_code == 200
+
+
+# ---------------------------------------------------------------- 本地账号
+
+def test_login_success(client, admin_headers):
+    response = client.post(
+        "/api/auth/login", json={"username": "admin", "password": TEST_PASSWORD}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["token"]
+    assert body["user"]["username"] == "admin"
+    assert body["user"]["role"] == "admin"
+    assert set(body["user"]) >= {
+        "id", "username", "displayName", "role", "mustChangePassword"
+    }
+    assert "passwordHash" not in body["user"]
+    assert "password_hash" not in body["user"]
+
+
+def test_login_failures_do_not_leak_user_existence(client):
+    wrong_password = client.post(
+        "/api/auth/login", json={"username": "admin", "password": "definitely-wrong"}
+    )
+    missing_user = client.post(
+        "/api/auth/login", json={"username": "nobody-xyz", "password": "definitely-wrong"}
+    )
+    assert wrong_password.status_code == 401
+    assert missing_user.status_code == 401
+    assert wrong_password.json() == missing_user.json()
+    assert wrong_password.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+def test_disabled_user_cannot_login(client):
+    from app.auth.routes import hash_password
+    from app.db import SessionLocal, User, now_str
+
+    username = f"disabled-{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as session:
+        session.add(User(
+            id=f"user-{uuid.uuid4().hex[:12]}", username=username,
+            display_name="已停用", password_hash=hash_password(TEST_PASSWORD),
+            role="user", enabled=False, must_change_password=False,
+            created_at=now_str(),
+        ))
+        session.commit()
+    response = client.post(
+        "/api/auth/login", json={"username": username, "password": TEST_PASSWORD}
+    )
+    assert response.status_code == 401
+
+
+def test_password_is_bcrypt_hash(client, admin_headers):
+    from app.db import SessionLocal, User
+
+    with SessionLocal() as session:
+        admin = session.query(User).filter(User.username == "admin").first()
+        assert admin.password_hash != TEST_PASSWORD
+        assert admin.password_hash.startswith("$2")
+        assert bcrypt.checkpw(TEST_PASSWORD.encode("utf-8"), admin.password_hash.encode("ascii"))
+
+
+def test_missing_token_is_rejected(client):
+    response = client.get("/api/qa/sessions")
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+def test_require_admin_returns_403(client, normal_user):
+    response = client.get("/api/users", headers=normal_user["headers"])
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_user_management_contract(client, admin_headers):
+    username = f"managed-{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        "/api/users",
+        json={"username": username, "displayName": "被管理用户",
+              "password": TEST_PASSWORD, "role": "user"},
+        headers=admin_headers,
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["username"] == username
+    assert body["displayName"] == "被管理用户"
+    assert body["enabled"] is True
+    assert "passwordHash" not in body
+
+    listed = client.get("/api/users", headers=admin_headers).json()
+    row = next(item for item in listed if item["username"] == username)
+    assert "lastLoginAt" in row and "passwordHash" not in row
+
+    updated = client.put(
+        f"/api/users/{body['id']}",
+        json={"displayName": "改名用户", "role": "user"}, headers=admin_headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["displayName"] == "改名用户"
+
+    assert client.post(
+        f"/api/users/{body['id']}/reset-password",
+        json={"password": "ResetPass123!"}, headers=admin_headers,
+    ).status_code == 200
+    assert client.post(
+        f"/api/users/{body['id']}/toggle", headers=admin_headers
+    ).status_code == 200
+
+    # 不提供 DELETE
+    assert client.delete(f"/api/users/{body['id']}", headers=admin_headers).status_code == 405
+
+    # 不能停掉自己
+    me = client.get("/api/auth/me", headers=admin_headers).json()
+    self_toggle = client.post(f"/api/users/{me['id']}/toggle", headers=admin_headers)
+    assert self_toggle.status_code == 400
+
+
+def test_must_change_password_guard(client):
+    from app.auth.routes import hash_password
+    from app.db import SessionLocal, User, now_str
+
+    username = f"must-change-{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as session:
+        session.add(User(
+            id=f"user-{uuid.uuid4().hex[:12]}", username=username,
+            display_name="待改密", password_hash=hash_password(TEST_PASSWORD),
+            role="user", enabled=True, must_change_password=True, created_at=now_str(),
+        ))
+        session.commit()
+    login = client.post(
+        "/api/auth/login", json={"username": username, "password": TEST_PASSWORD}
+    )
+    assert login.status_code == 200
+    headers = {"X-Access-Token": login.json()["token"]}
+    assert client.get("/api/auth/me", headers=headers).status_code == 200
+    blocked = client.get("/api/qa/sessions", headers=headers)
+    assert blocked.status_code == 403
+    assert blocked.json()["error"]["code"] == "MUST_CHANGE_PASSWORD"
+
+    assert client.post(
+        "/api/auth/change-password",
+        json={"oldPassword": TEST_PASSWORD, "newPassword": "NewPass123!"},
+        headers=headers,
+    ).status_code == 200
+    assert client.get("/api/qa/sessions", headers=headers).status_code == 200
+
+
+# ---------------------------------------------------------------- 数据隔离
+
+def test_qa_session_owner_isolation(client, admin_headers, normal_user):
+    created = client.post(
+        "/api/qa/sessions", json={"module": "assistant"}, headers=admin_headers
+    )
+    assert created.status_code == 200
+    session_id = created.json()["id"]
+
+    admin_ids = [s["id"] for s in client.get("/api/qa/sessions", headers=admin_headers).json()]
+    assert session_id in admin_ids
+    user_ids = [s["id"] for s in client.get(
+        "/api/qa/sessions", headers=normal_user["headers"]
+    ).json()]
+    assert session_id not in user_ids
+
+    foreign_delete = client.delete(
+        f"/api/qa/sessions/{session_id}", headers=normal_user["headers"]
+    )
+    assert foreign_delete.status_code == 404
+    foreign_read = client.get(
+        f"/api/qa/sessions/{session_id}", headers=normal_user["headers"]
+    )
+    assert foreign_read.status_code == 404
+
+    assert client.delete(
+        f"/api/qa/sessions/{session_id}", headers=admin_headers
+    ).status_code == 200
+
+
+def test_assistant_upload_owner_isolation(client, admin_headers, normal_user):
+    from app.auth.common import bind_owner_id, reset_owner_id
+    from app.db import AssistantUpload, SessionLocal
+    from app.modules.conflict.agent_tool import _load_uploaded
+
+    response = client.post(
+        "/api/assistant/uploads",
+        files=[("files", ("隔离测试.txt", b"owner-isolation", "text/plain"))],
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    upload_id = response.json()[0]["id"]
+    admin_id = client.get("/api/auth/me", headers=admin_headers).json()["id"]
+    with SessionLocal() as session:
+        row = session.get(AssistantUpload, upload_id)
+        assert row.owner_id == admin_id
+
+    token = bind_owner_id(normal_user["id"])
+    try:
+        uploaded, missing = _load_uploaded([upload_id])
+    finally:
+        reset_owner_id(token)
+    assert uploaded == [] and upload_id in missing
+
+    token = bind_owner_id(admin_id)
+    try:
+        uploaded, missing = _load_uploaded([upload_id])
+    finally:
+        reset_owner_id(token)
+    assert len(uploaded) == 1 and not missing
+
+
+def test_report_tasks_owner_isolation(client, admin_headers, normal_user):
+    from app.db import SessionLocal, now_str
+    from app.modules.contract.models import ContractTask
+    from app.modules.workpaper.models import WorkpaperTask
+
+    admin_id = client.get("/api/auth/me", headers=admin_headers).json()["id"]
+    task_id = f"iso-{uuid.uuid4().hex[:10]}"
+    with SessionLocal() as session:
+        session.add(ContractTask(
+            id=task_id, name="他人合同报告", created_at=now_str(), status="done",
+            report_json='{"issues": []}', owner_id=admin_id,
+        ))
+        session.add(WorkpaperTask(
+            id=task_id, name="他人底稿报告", created_at=now_str(), status="done",
+            report_json='{"items": []}', owner_id=admin_id,
+        ))
+        session.commit()
+
+    for module in ("contract", "workpaper"):
+        rows = client.get(f"/api/modules/{module}/tasks", headers=normal_user["headers"]).json()
+        assert all(row["id"] != task_id for row in rows)
+        detail = client.get(
+            f"/api/modules/{module}/tasks/{task_id}", headers=normal_user["headers"]
+        ).json()
+        assert detail.get("found") is False
+        exported = client.get(
+            f"/api/modules/{module}/tasks/{task_id}/export",
+            headers=normal_user["headers"],
+        )
+        assert exported.status_code == 404
+
+    own = client.get("/api/modules/contract/tasks", headers=admin_headers).json()
+    assert any(row["id"] == task_id for row in own)

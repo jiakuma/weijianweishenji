@@ -86,6 +86,12 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     if (fn) qaSwitchHandlers.value[module] = fn
     else delete qaSwitchHandlers.value[module]
   }
+  /** 退出/切换账号时丢弃会话状态，下一次进入页面由 loadQaSessions 按新身份重新拉取。 */
+  function clearQaState(): void {
+    qaSessions.value = []
+    qaSessionId.value = ''
+    qaSwitchHandlers.value = {}
+  }
   function requestQaSessionSwitch(id: string, module?: string) {
     qaSessionId.value = id
     const key = module || 'assistant'
@@ -190,7 +196,7 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     keyword, currentCategory, directOnly, starredOnly, sort, viewMode, mapOpen, loading, backendReady,
     qaSessions, qaSessionId,
     loadQaSessions, createQaSession, removeQaSession,
-    setQaSwitchHandler, requestQaSessionSwitch,
+    setQaSwitchHandler, requestQaSessionSwitch, clearQaState,
     loadDocs, loadCategories, loadTasks, loadSettings, loadStorage, loadAll,
     selectCategory, selectDirect, setKeyword, setSort, setViewMode, refreshAfterImport,
     startPolling, stopPolling,

@@ -29,6 +29,30 @@ export function failMessage(status: number, path: string): string {
   return `${path} → ${status}`
 }
 
+/** 后端统一错误体 { error: { code, message } }；兼容 FastAPI 的 detail。 */
+function backendError(payload: unknown): { code: string; message: string } | null {
+  if (!payload || typeof payload !== 'object') return null
+  if ('error' in payload) {
+    const error = (payload as { error?: unknown }).error
+    if (error && typeof error === 'object') {
+      const code = (error as { code?: unknown }).code
+      const message = (error as { message?: unknown }).message
+      return {
+        code: typeof code === 'string' ? code : '',
+        message: typeof message === 'string' ? message : '',
+      }
+    }
+  }
+  if ('detail' in payload && typeof (payload as { detail?: unknown }).detail === 'string') {
+    return { code: '', message: (payload as { detail: string }).detail }
+  }
+  return null
+}
+
+function errorMessage(status: number, path: string, payload?: unknown): string {
+  return backendError(payload)?.message || failMessage(status, path)
+}
+
 const http = axios.create({
   baseURL: BASE,
   timeout: 120000,
@@ -42,6 +66,25 @@ function attachToken(config: InternalAxiosRequestConfig): InternalAxiosRequestCo
 }
 
 http.interceptors.request.use(attachToken)
+
+// 鉴权失效统一处理：清本地令牌并跳转；登录接口自身的 401 只用于展示错误，不能跳转。
+http.interceptors.response.use(
+  (res) => res,
+  (err: unknown) => {
+    if (!axios.isAxiosError(err)) return Promise.reject(err)
+    const status = err.response?.status ?? 0
+    const code = backendError(err.response?.data)?.code ?? ''
+    const url = err.config?.url ?? ''
+    if (status === 401 && !url.includes('/api/auth/login')) {
+      setAccessToken('')
+      if (window.location.pathname !== '/login') window.location.href = '/login'
+    }
+    if (status === 403 && code === 'MUST_CHANGE_PASSWORD' && window.location.pathname !== '/change-password') {
+      window.location.href = '/change-password'
+    }
+    return Promise.reject(err)
+  },
+)
 
 // 后端新契约 { data: ... }；旧接口直接返回值。两者共存期间自动解包。
 function unwrap<T>(payload: unknown): T {
@@ -73,7 +116,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return unwrap<T>(res.data)
   } catch (err) {
     if (axios.isAxiosError(err)) {
-      throw new Error(failMessage(err.response?.status ?? 0, path), { cause: err })
+      throw new Error(errorMessage(err.response?.status ?? 0, path, err.response?.data), { cause: err })
     }
     throw err
   }
@@ -95,8 +138,7 @@ export async function uploadRequest<T>(path: string, form: FormData): Promise<T>
     return unwrap<T>(res.data)
   } catch (err) {
     const message = axios.isAxiosError(err)
-      ? (err.response?.data as { error?: string } | undefined)?.error ||
-        failMessage(err.response?.status ?? 0, path)
+      ? errorMessage(err.response?.status ?? 0, path, err.response?.data)
       : String(err)
     throw new Error(message, { cause: err })
   }

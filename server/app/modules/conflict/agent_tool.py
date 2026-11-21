@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 
 from ... import agent_tools
+from ...auth.common import get_owner_id
 from ...db import AssistantUpload, Document, DocumentFile, SessionLocal, now_str
 from ...llm import llm_config
 from .models import ConflictTask
@@ -34,10 +35,13 @@ def _load_uploaded(doc_ids: list[str]) -> tuple[list[tuple[str, bytes]], list[st
     """
     uploaded: list[tuple[str, bytes]] = []
     missing: list[str] = []
+    owner = get_owner_id()
     with SessionLocal() as s:
         for did in doc_ids:
-            # 1) 智能助手临时附件（本次会话上传，未入库）
+            # 1) 智能助手临时附件（本次会话上传，未入库）；按归属人隔离
             tmp = s.get(AssistantUpload, did)
+            if tmp and owner and (tmp.owner_id or "") != owner:
+                tmp = None
             if tmp:
                 tmp_path = Path(tmp.stored_path) if tmp.stored_path else None
                 if not tmp_path or not tmp_path.exists():
@@ -112,7 +116,7 @@ def _persist(task: dict, report: dict) -> None:
         with SessionLocal() as s:
             row = s.get(ConflictTask, task["task_id"])
             if row is None:
-                row = ConflictTask(id=task["task_id"])
+                row = ConflictTask(id=task["task_id"], owner_id=get_owner_id())
                 s.add(row)
             row.name = task["name"]
             row.created_at = task["created_at"]
@@ -178,6 +182,7 @@ def detect(args: dict) -> dict:
         _LAST_RESULT["task_id"] = task["task_id"]
         _LAST_RESULT["report"] = report
         _LAST_RESULT["name"] = task["name"]
+        _LAST_RESULT["owner_id"] = get_owner_id()
     if emit:
         try:
             emit({
@@ -195,19 +200,23 @@ def get_result(args: dict) -> dict:
     task_id = str(args.get("taskId") or "").strip()
     with _LAST_LOCK:
         cached = dict(_LAST_RESULT)
+    owner = get_owner_id()
     if task_id:
         with SessionLocal() as s:
             row = s.get(ConflictTask, task_id)
-            if row:
+            if row and (not owner or (row.owner_id or "") == owner):
                 return _result_payload(task_id, row.name, json.loads(row.report_json or "{}"))
-        if cached.get("task_id") == task_id and cached.get("report"):
+        if (cached.get("task_id") == task_id and cached.get("report")
+                and (not owner or cached.get("owner_id", "") == owner)):
             return _result_payload(task_id, cached.get("name", ""), cached["report"])
         return {"ok": False, "error": "找不到该检测记录"}
-    if cached.get("report"):
+    if cached.get("report") and (not owner or cached.get("owner_id", "") == owner):
         return _result_payload(cached.get("task_id", ""), cached.get("name", ""), cached["report"])
     with SessionLocal() as s:
-        row = (s.query(ConflictTask).filter(ConflictTask.status == "done")
-               .order_by(ConflictTask.created_at.desc()).first())
+        query = s.query(ConflictTask).filter(ConflictTask.status == "done")
+        if owner:
+            query = query.filter(ConflictTask.owner_id == owner)
+        row = query.order_by(ConflictTask.created_at.desc()).first()
         if not row:
             return {"ok": False, "error": "还没有做过制度互斥检测"}
         return _result_payload(row.id, row.name, json.loads(row.report_json or "{}"))

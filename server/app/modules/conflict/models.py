@@ -23,6 +23,7 @@ class ConflictTask(Base):
     files_json = Column(Text, default="[]")
     report_json = Column(Text, default="{}")
     error = Column(Text, default="")
+    owner_id = Column(String, index=True, default="")
 
 
 class ConflictSession(Base):
@@ -34,3 +35,4 @@ class ConflictSession(Base):
     task_ids_json = Column(Text, default="[]")
     created_at = Column(String, default="")
     updated_at = Column(String, default="")
+    owner_id = Column(String, index=True, default="")
