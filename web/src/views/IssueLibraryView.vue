@@ -14,7 +14,7 @@
       <el-input v-model="filters.q" class="issue-filter-q" placeholder="关键词：表现 / 问题 / 定性依据 / 整改" clearable @keyup.enter="doSearch" />
       <el-button type="primary" @click="doSearch">查询</el-button>
       <el-button @click="resetFilters">重置</el-button>
-      <span class="issue-stat">共 {{ displayTotal }} 条 · 当前第 {{ page }} / {{ pageCount }} 页</span>
+      <span class="issue-stat">共 {{ displayTotal }} 条<span v-if="stats.dbTotal && displayTotal !== stats.dbTotal">（库内共 {{ stats.dbTotal }} 条）</span> · 当前第 {{ page }} / {{ pageCount }} 页</span>
     </div>
 
     <div class="issue-tip">
@@ -136,7 +136,7 @@ const yearOptions = computed<string[]>(() => {
   return years.length ? years : ['2025', '2024']
 })
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
-const displayTotal = computed(() => stats.value.dbTotal || total.value)
+const displayTotal = computed(() => total.value)
 const yearDistribution = computed(() =>
   Object.entries(stats.value.byYear || {})
     .map(([year, count]) => `${year} 年 ${count} 条`)
