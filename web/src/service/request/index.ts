@@ -135,8 +135,11 @@ export async function streamRequest(
   if (buffer.trim()) onChunk(buffer)
 }
 
+// axios 收到字符串 body 时会默认按 form 表单发送；必须显式声明 JSON，
+// 否则后端 Pydantic 拿到的是字符串而不是对象，所有 POST 都会变成 422。
 export const post = (body: unknown): RequestInit => ({
   method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(body),
 })
 

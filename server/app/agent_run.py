@@ -181,8 +181,10 @@ _SYSTEM_NATIVE = (
     "规则：\n"
     "1. 只依据工具返回的资料回答，不得编造；资料不足就明确说明。\n"
     "2. 需要查资料时调用工具；已经够了就直接输出最终答案。\n"
-    "3. 最终答案输出严格 JSON：{\"conclusion\": \"一段结论\", \"basis\": [\"依据1\", \"依据2\"]}。\n"
-    "4. basis 每条依据句末标注引用编号，格式 [数字]，编号取自工具结果里的「可用引用」。\n"
+    "3. 最终答案输出严格 JSON：{\"conclusion\": \"正文\", \"basis\": [\"依据1\", \"依据2\"]}。\n"
+    "   conclusion 用自然语言 Markdown 写：先给一句核心结论，再按需用「**小标题**」分段、"
+    "- 列表列要点，把关键数字和判断写清楚；不要写成机械的一句话，也不要复述工具调用过程。\n"
+    "4. 引用编号 [数字] 直接内联在相关句子末尾，编号取自工具结果里的「可用引用」；basis 放次要依据。\n"
     "5. 若问题含「它 / 那个 / 上面 / 刚才 / 再 / 这几步」等指代，必须先用「最近对话」补全成完整问题"
     "再检索，不要直接要求用户补充；只有最近对话里确实找不到指代对象时才请用户补充。\n"
     "6. 某次检索没有命中时，换关键词或换角度再查（不要重复同一查询）；连续两次无结果就如实说明没查到。\n"
@@ -195,8 +197,10 @@ _SYSTEM_NATIVE = (
 
 _FINAL_SYSTEM = (
     "你是知识库问答助手。只依据已知信息回答，不得编造。"
-    "输出严格 JSON：{\"conclusion\": \"一段结论\", \"basis\": [\"依据1\"]}，"
-    "basis 每条句末标注引用编号 [数字]。不要输出 JSON 以外的任何内容。"
+    "输出严格 JSON：{\"conclusion\": \"正文\", \"basis\": [\"依据1\"]}。"
+    "conclusion 用自然语言 Markdown 写：先给核心结论，再按需用 **小标题** 分段、- 列表列要点，"
+    "把关键数字和判断写清楚，不要只写一句干巴巴的话。"
+    "引用编号 [数字] 内联在相关句末，basis 放次要依据。不要输出 JSON 以外的任何内容。"
 )
 
 _SYSTEM_JSON = (
@@ -204,9 +208,10 @@ _SYSTEM_JSON = (
     "可用工具：\n" + _TOOL_LIST + "\n\n"
     "每一步只输出严格 JSON，二选一：\n"
     "{\"tool_calls\": [{\"name\": \"工具名\", \"args\": {...}}]}   ← 还要查资料\n"
-    "{\"answer\": {\"conclusion\": \"一段结论\", \"basis\": [\"依据1\"]}}   ← 可以回答了\n"
+    "{\"answer\": {\"conclusion\": \"正文\", \"basis\": [\"依据1\"]}}   ← 可以回答了\n"
+    "conclusion 用自然语言 Markdown：先核心结论，再按需用 **小标题** 分段、- 列表列要点，关键数字写清楚，不要只写一句话。\n"
     "规则：只依据工具返回的资料回答，不得编造；资料不足就明确说明；"
-    "basis 每条依据句末标注引用编号 [数字]，编号取自工具结果里的「可用引用」；"
+    "引用编号 [数字] 内联在相关句末，编号取自工具结果里的「可用引用」；basis 放次要依据；"
     "问题含指代时必须先用「最近对话」补全成完整问题再检索，只有历史里也找不到对象时才请用户补充；"
     "检索没命中就换关键词再查，连续两次无结果如实说明；"
     "用户上传文件后问题末尾会出现「待检测的文档 ID：tmp-xxx、tmp-yyy」，这些 tmp- 开头的就是本次要处理的文件。"
@@ -238,7 +243,9 @@ def _parse_final(raw: str) -> dict | None:
     if not conclusion:
         return None
     basis = [str(x).strip() for x in (obj.get("basis") or []) if str(x).strip()]
-    return {"conclusion": conclusion, "basis": basis}
+    from .qa import build_markdown
+    return {"conclusion": conclusion, "basis": basis,
+            "markdown": build_markdown(conclusion, basis)}
 
 
 def _post(payload: dict, timeout: int) -> dict:
@@ -422,9 +429,37 @@ _MODULE_TOOL_HINT = {
 }
 
 
+def _answer_chunks(text: str, size: int = 18):
+    """把最终 Markdown 切成小段推送，前端逐字显示。
+
+    模型给出的最终答案本身已生成完毕，这里只负责呈现节奏：按字/词切分并保留
+    换行边界，避免一次性整段出现。审计长报告不参与（由专门的结果卡片承载）。
+    """
+    buf: list[str] = []
+    for ch in text:
+        buf.append(ch)
+        if ch == "\n" or len(buf) >= size:
+            yield "".join(buf)
+            buf = []
+    if buf:
+        yield "".join(buf)
+
+
+def _push_answer(markdown: str, on_answer_delta=None) -> None:
+    if not markdown or on_answer_delta is None:
+        return
+    for chunk in _answer_chunks(markdown):
+        try:
+            on_answer_delta(chunk)
+        except Exception:
+            return
+        time.sleep(0.012)
+
+
 def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
               module: str = "assistant",
-              on_step=None, on_status=None, on_confirm=None) -> dict:
+              on_step=None, on_status=None, on_confirm=None,
+              on_answer_delta=None) -> dict:
     """返回 QAResult 结构。快速通道不进循环；LLM 不可用时退回固定管线。
     写工具经 on_confirm 挂起等待用户决定，超时或拒绝一律不执行。"""
     question = (question or "").strip()
@@ -432,7 +467,10 @@ def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
 
     # 快速通道：寒暄 / 库内统计 / 无 LLM —— 沿用 qa.py 已验证的行为，不多花一次调用
     if (not has_llm()) or qa._rule_route(question) is not None or qa._is_stats_question(question):
-        return qa.answer_question(question, mode)
+        quick = qa.answer_question(question, mode)
+        answer = quick.get("answer") or {}
+        _push_answer(answer.get("markdown") or answer.get("conclusion") or "", on_answer_delta)
+        return quick
 
     cancel_ev = request_cancel(run_id)
     native = probe_tool_calls()
@@ -717,10 +755,15 @@ def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
             "stopped": "已停止，返回已查到的结果。",
             "failed": "达到步数/超时上限或调用失败，返回已查到的结果。",
         }[status]
+        from .qa import build_markdown
+        markdown = final.get("markdown") or build_markdown(
+            final["conclusion"], final.get("basis", []))
+        _push_answer(markdown, on_answer_delta)
         result = {
             "question": question,
             "answer": {"conclusion": final["conclusion"],
-                       "basis": final.get("basis", []), "notice": notice},
+                       "basis": final.get("basis", []), "notice": notice,
+                       "markdown": markdown},
             "citations": _citations_from(pool, final.get("basis", [])),
             "createdAt": now,
             "recallMode": mode,

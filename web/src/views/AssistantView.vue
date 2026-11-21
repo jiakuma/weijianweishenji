@@ -23,10 +23,16 @@
         <div v-else-if="m.error" class="bubble bot error">{{ m.error }}</div>
 
         <div v-else-if="m.result" class="bubble bot">
-          <div v-if="m.streaming" class="bubble-inline-loading">
+          <div v-if="m.streaming && !m.answerText && !m.contract && !m.conflict && !m.workpaper" class="bubble-inline-loading">
             <span class="dot" /><span class="dot" /><span class="dot" /> {{ m.conflictStage || m.contractStage || m.workpaperStage || t('assistant.analyzing') }}
           </div>
-          <div v-else-if="m.result?.answer?.conclusion && !m.conflict && !m.contract && !m.workpaper" class="qa-conclusion">{{ m.result.answer.conclusion }}</div>
+          <div v-else-if="(m.answerText || m.result?.answer?.markdown || m.result?.answer?.conclusion) && !m.conflict && !m.contract && !m.workpaper" class="qa-markdown">
+            <MarkdownView
+              :text="m.answerText || m.result?.answer?.markdown || m.result?.answer?.conclusion || ''"
+              @cite="(n: number) => openCitation(i, n)"
+            />
+            <span v-if="m.streaming && m.answerText" class="typing-cursor" />
+          </div>
 
           <div v-else-if="m.contract" class="contract-report">
             <div class="contract-report-head">
@@ -167,6 +173,7 @@ import { Paperclip } from '@element-plus/icons-vue'
 import { ElMessage, type UploadProps } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
+import MarkdownView from '@/components/MarkdownView.vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import type {
   AgentConfirm, AgentProgress, ConflictDetail, ConflictRow,
@@ -207,7 +214,7 @@ const moduleConfig: Record<string, { empty: string; suggests: string[]; defaultQ
 }
 const cfg = computed(() => moduleConfig[moduleKey.value])
 
-type AssistantMsg = { role: 'assistant'; loading?: boolean; streaming?: boolean;
+type AssistantMsg = { role: 'assistant'; loading?: boolean; streaming?: boolean; answerText?: string;
                       error?: string; result?: QAResult; confirm?: AgentConfirm;
                       progress?: AgentProgress[]; conflictStage?: string; conflict?: ConflictDetail;
                       contractStage?: string; contract?: ContractDetail
@@ -472,13 +479,19 @@ async function runAgent(q: string, files?: string[]) {
         else list.push(payload)
         scrollToEnd()
       },
+      onAnswerDelta: (text) => {
+        const m = messages.value[idx] as AssistantMsg
+        m.answerText = (m.answerText || '') + text
+        if (m.result) m.result.answer = { ...m.result.answer, markdown: m.answerText }
+        scrollToEnd()
+      },
       onDone: (result) => {
         const prev = messages.value[idx] as AssistantMsg
         if (prev.conflict) result.conflict = prev.conflict
         if (prev.contract) result.contract = prev.contract
         if (prev.workpaper) result.workpaper = prev.workpaper
         result.status = 'done'
-        messages.value[idx] = { role: 'assistant', result, progress: prev.progress,
+        messages.value[idx] = { role: 'assistant', result, answerText: '', progress: prev.progress,
                                 conflict: prev.conflict, conflictStage: prev.conflictStage,
                                 contract: prev.contract, contractStage: prev.contractStage,
                                 workpaper: prev.workpaper, workpaperStage: prev.workpaperStage }
@@ -547,6 +560,12 @@ async function decideConfirm(idx: number, decision: 'approve' | 'reject') {
 
 function openDoc(c: QACitation) {
   void router.push(`/document/${c.docId}?chunk=${c.chunkId}`)
+}
+
+function openCitation(msgIdx: number, n: number) {
+  const m = messages.value[msgIdx] as AssistantMsg
+  const c = m.result?.citations?.[n]
+  if (c) openDoc(c)
 }
 
 function exportConflict(taskId: string) {
@@ -654,6 +673,9 @@ onUnmounted(() => {
 @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 
 .qa-conclusion { white-space: pre-wrap; }
+.qa-markdown { line-height: 1.8; }
+.typing-cursor { display: inline-block; width: 2px; height: 13px; margin-left: 2px; vertical-align: -2px; background: var(--primary); animation: caret .9s steps(1) infinite; }
+@keyframes caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
 
 .qa-actions { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; }
 .qa-action { font-size: 12px; color: var(--sub); border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }

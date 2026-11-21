@@ -18,7 +18,8 @@ export const qaApi = {
 
   createSession(module = 'assistant') {
     return request<import('@/types').QASession>('/api/qa/sessions', {
-      method: 'POST', body: JSON.stringify({ module }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ module }),
     })
   },
 
@@ -106,6 +107,7 @@ export const qaApi = {
           const { taskId, taskName, status, progress, message } = evt
           handlers.onProgress?.({ taskId, taskName, status, progress, message } as import('@/types').AgentProgress)
         } else if (type === 'status') handlers.onStatus?.(evt.steps as number)
+        else if (type === 'answer_delta') handlers.onAnswerDelta?.(String(evt.text || ''))
         else if (type === 'done') handlers.onDone?.(evt.result as QAResult)
         else if (type === 'stopped') handlers.onStopped?.()
         else if (type === 'error') handlers.onError?.(String(evt.message || '运行失败'))

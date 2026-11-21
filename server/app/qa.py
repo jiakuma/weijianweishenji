@@ -181,6 +181,22 @@ def _clarify(question: str, fallback: str) -> str:
     return (out or "").strip()[:160] or default
 
 
+def build_markdown(conclusion: str, basis: list[str] | None = None) -> str:
+    """把结论与依据组装成自然语言 Markdown 正文。
+
+    conclusion 本身可能已含 Markdown；basis 作为要点列表附在下方。
+    这样前端可以用一套渲染逻辑呈现所有回答，而旧字段继续保留兼容。
+    """
+    parts = [str(conclusion or "").strip()]
+    for item in basis or []:
+        text = str(item).strip()
+        if not text:
+            continue
+        line = text if text.startswith(("- ", "* ", "### ")) else f"- {text}"
+        parts.append(line)
+    return "\n\n".join(p for p in parts if p).strip()
+
+
 def _direct_result(question: str, mode: str, now: str, route: str, reply: str) -> dict:
     """非知识意图的直接回应：无检索、无引用、无依据。"""
     notice = {
@@ -189,7 +205,8 @@ def _direct_result(question: str, mode: str, now: str, route: str, reply: str) -
     }.get(route, "直接读取知识库数据，无需检索。")
     return {
         "question": question,
-        "answer": {"conclusion": reply, "basis": [], "notice": notice},
+        "answer": {"conclusion": reply, "basis": [], "notice": notice,
+                   "markdown": build_markdown(reply)},
         "citations": [],
         "createdAt": now,
         "recallMode": mode,
@@ -244,6 +261,15 @@ def _stats_result(question: str, mode: str, now: str) -> dict:
     result = _direct_result(question, mode, now, "stats", conclusion)
     result["answer"]["basis"] = basis
     result["answer"]["notice"] = "直接读取知识库数据，未检索文档内容。"
+    overview = (
+        f"**知识库概况**\n\n"
+        f"- 资料 {data['documents']} 篇，其中已解析 {data['parsed']} 篇\n"
+        f"- 知识切片 {data['chunks']} 个，分类 {data['categories']} 个\n"
+        f"- 原始文件合计约 {mb} MB\n\n"
+        "**分类分布**\n\n"
+        + "\n".join(f"- {x['name']}：{x['count']} 篇" for x in data["byCategory"][:8])
+    )
+    result["answer"]["markdown"] = overview
     result["actions"] = [action]
     return result
 
@@ -382,6 +408,7 @@ def _generate(question: str, chunks: list[dict]) -> dict | None:
         "conclusion": conclusion,
         "basis": basis,
         "notice": f"AI 生成（{model}），内容仅供参考；请点击引用核对原文。",
+        "markdown": build_markdown(conclusion, basis),
     }
 
 

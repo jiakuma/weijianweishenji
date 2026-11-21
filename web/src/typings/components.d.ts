@@ -42,6 +42,7 @@ declare module 'vue' {
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     ElUpload: typeof import('element-plus/es')['ElUpload']
     KnowledgeMap: typeof import('./../components/KnowledgeMap.vue')['default']
+    MarkdownView: typeof import('./../components/MarkdownView.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
   }

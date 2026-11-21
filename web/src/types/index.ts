@@ -145,6 +145,7 @@ export interface QAAnswer {
   conclusion: string
   basis: string[]
   notice?: string
+  markdown?: string
 }
 
 export interface AgentAction {
@@ -347,6 +348,7 @@ export interface AgentStreamHandlers {
   onContractProgress?: (payload: ContractProgress) => void
   onWorkpaperProgress?: (payload: WorkpaperProgress) => void
   onStatus?: (steps: number) => void
+  onAnswerDelta?: (text: string) => void
   onDone?: (result: QAResult) => void
   onStopped?: () => void
   onError?: (message: string) => void

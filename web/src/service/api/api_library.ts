@@ -64,7 +64,8 @@ export const libraryApi = {
 
   renameCategory(id: string, name: string) {
     return request<{ ok: boolean; message?: string }>(`/api/categories/${id}`, {
-      method: 'PUT', body: JSON.stringify({ name }),
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
     })
   },
 

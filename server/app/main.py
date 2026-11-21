@@ -1375,6 +1375,9 @@ def agent_stream(body: AskBody):
                 module=body.module,
                 on_step=on_action,
                 on_confirm=lambda payload: emit({"type": "confirm", "runId": run_id, **payload}),
+                on_answer_delta=lambda text: emit({
+                    "type": "answer_delta", "runId": run_id, "qaId": qa_id, "text": text,
+                }),
             )
             # 用户中途停止：更新占位为 stopped，不给完整答案
             if agent_run.is_cancelled(run_id):
