@@ -829,11 +829,13 @@ def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
                 actions.append(gact)
                 if on_step:
                     on_step(gact)
-            issue_count = get_data.get("issueCount", workpaper_detail.get("issueCount", 0))
-            recon_count = get_data.get("reconCount", workpaper_detail.get("reconCount", 0))
+            wp_summary = get_data.get("summary") or {}
+            total = int(wp_summary.get("total", 0))
+            pass_count = int(wp_summary.get("pass", 0))
+            fail_count = int(wp_summary.get("fail", 0))
             final = {
-                "conclusion": (f"已完成底稿审核：发现 {issue_count} 项底稿问题、"
-                               f"{recon_count} 项跨文件差异。审计定性须由审计人员复核。"),
+                "conclusion": (f"已完成底稿审核：审核要点 {total} 项，通过 {pass_count} 项、"
+                               f"不通过 {fail_count} 项。"),
                 "basis": [],
             }
             decision = Decision(final=final)

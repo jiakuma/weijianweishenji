@@ -13,45 +13,39 @@ router = APIRouter()
 
 
 def _markdown(report: dict, name: str) -> str:
+    """按演示报告范式导出：逐项审核结果 + 总体审核结果，不输出技术性清单。"""
     summary = report.get("summary") or {}
-    lines = ["# 底稿审核报告", ""]
-    lines.append(f"- 被审计单位：{report.get('unit_count', 0)} 家")
-    lines.append(f"- 上位文件：{report.get('plan_count', 0)} 份；审计工作底稿：{report.get('workpaper_count', 0)} 份")
-    lines.append("")
+    items = report.get("items") or report.get("assessments") or []
+    result_text = {"通过": "✅ 审核通过", "不通过": "❌ 审核不通过",
+                   "无法判断": "⚠️ 无法判断"}
 
-    lines.append("## 一、汇总结论")
-    lines.append("")
-    lines.append(summary.get("conclusion") or "未能从上位文件中提取到可核对的要求点。")
-    lines.append("")
-
-    lines.append("## 二、逐项核对")
-    lines.append("")
-    assessments = report.get("assessments", [])
-    if not assessments:
-        lines.append("无可核对的要求点。")
-    for a in assessments:
-        lines.append(f"### {a.get('id', '')} {a.get('requirement', '')}")
-        lines.append(f"- 判定：{a.get('result', '无法判断')}")
-        if a.get("scope"):
-            lines.append(f"- 适用范围：{a.get('scope', '')}")
-        if a.get("source"):
-            lines.append(f"- 上位文件：{a.get('source', '')}")
-        lines.append(f"- 说明：{a.get('reason', '')}")
-        for ev in a.get("evidence", []) or []:
-            lines.append(f"- 证据：{ev}")
+    lines = ["# 文档审核报告", "", "## 一、详细审核结果", ""]
+    for i, item in enumerate(items, 1):
+        result = str(item.get("result") or "无法判断").strip()
+        if result in ("符合", "不符合"):
+            result = {"符合": "通过", "不符合": "不通过"}[result]
+        title = str(item.get("topic") or item.get("requirement") or "").strip()
+        file_name = str(item.get("file") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        reason_label = ("通过原因" if result == "通过"
+                        else "不通过原因" if result == "不通过" else "无法判断原因")
+        lines.append(f"{item.get('index') or i}. {title}")
+        if file_name:
+            lines.append(f"对应文件：{file_name}")
+        lines.append(f"审核结果：{result_text.get(result, result_text['无法判断'])}")
+        lines.append(f"{reason_label}：{reason}")
         lines.append("")
 
-    lines.append("## 三、文件清单与使用说明")
-    lines.append("")
-    for f in report.get("file_roles", []):
-        unit = f.get("unit") or "未识别单位"
-        topic = f.get("topic") or ""
-        lines.append(f"- {f.get('name', '')}：{f.get('role', '')} / {unit} / {topic}")
-    errs = report.get("errors", [])
-    if errs:
-        lines.append("- 处理提示：" + "；".join(errs))
-    lines.append("")
-    lines.append("> " + report.get("disclaimer", "本报告为文本层面的底稿复核提示，不构成审计结论。"))
+    lines.extend([
+        "## 二、总体审核结果", "",
+        f"审核要点总数：{summary.get('total', len(items))}项",
+        f"✅ 审核通过：{summary.get('pass', 0)}项",
+        f"❌ 审核不通过：{summary.get('fail', 0)}项",
+        f"总体审核结果：{summary.get('conclusion', '⚠️ 需补充材料')}",
+        f"总体审核意见：{summary.get('opinion', '')}", "",
+    ])
+    disclaimer = report.get("disclaimer") or "本报告为文本层面的底稿复核提示，不构成审计结论。"
+    lines.append(f"<small>{disclaimer}</small>")
     return "\n".join(lines)
 
 

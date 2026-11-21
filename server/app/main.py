@@ -1231,25 +1231,10 @@ def _persist_qa(result: dict, session_id: str, qa_id: str = "") -> str:
         for action in result.get("actions") or []:
             detail = (action.get("detail") or {}).get("result") or {}
             if action.get("tool") == "get_workpaper_result" and detail.get("issues") is not None:
-                meta["workpaper"] = {
-                    "taskId": detail.get("taskId", ""),
-                    "unitCount": detail.get("unitCount", 0),
-                    "fileCount": detail.get("fileCount", 0),
-                    "workpaperCount": detail.get("workpaperCount", 0),
-                    "totalIssues": detail.get("totalIssues", 0),
-                    "levelCount": detail.get("levelCount", {}),
-                    "issues": detail.get("issues", []),
-                    "reconciliation": detail.get("reconciliation", []),
-                    "fileRoles": detail.get("fileRoles", []),
-                    "disclaimer": detail.get("disclaimer", ""),
-                }
+                # 整包透传工具结果：前端卡片需要 items/summary，字段白名单会漏掉新结构。
+                meta["workpaper"] = dict(detail)
             elif action.get("tool") == "audit_workpaper" and detail.get("taskId") and not meta.get("workpaper"):
-                meta["workpaper"] = {
-                    "taskId": detail.get("taskId", ""),
-                    "unitCount": detail.get("unitCount", 0),
-                    "totalIssues": detail.get("totalIssues", 0),
-                    "issues": [], "reconciliation": [],
-                }
+                meta["workpaper"] = dict(detail)
     stored_answer = {**result["answer"], "_meta": meta}
     with SessionLocal() as s:
         row = s.get(QARow, qa_id) if qa_id else None

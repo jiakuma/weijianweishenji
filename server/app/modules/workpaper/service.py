@@ -1,7 +1,10 @@
-"""底稿审核核心流水线：解析 -> 角色识别 -> 逐份复核 -> 跨底稿勾稽 -> 报告。
+"""底稿审核核心流水线：解析 -> 角色识别 -> 提取审计事项 -> 逐项匹配底稿并判定 -> 报告。
 
 输入 uploaded = [(filename, bytes), ...]。扫描/OCR 沿用 conflict/parser.py；
 .doc 审计方案通过本机 Word COM 读取（Windows 环境），docx/txt/pdf 走统一解析器。
+
+报告以审计方案「审计内容和重点」中的一级事项为审核要点，一项对应一份底稿，
+逐项给出「通过 / 不通过 / 无法判断」及一段连贯的原因说明，最后汇总总体结论。
 """
 from __future__ import annotations
 
@@ -16,16 +19,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from ...llm import LLMConfig, OFFICIAL_MODEL, chat_url, normalize_base_url, post_chat
 from ..conflict.parser import parse_document
 from .prompts import (
-    ASSESS_SYSTEM, ASSESS_USER, REQUIREMENT_SYSTEM, REQUIREMENT_USER,
-    ROLE_SYSTEM, ROLE_USER,
+    REPORT_ASSESS_SYSTEM, REPORT_ASSESS_USER, ROLE_SYSTEM, ROLE_USER,
+    TOPIC_SYSTEM, TOPIC_USER,
 )
 
 PARSE_WORKERS = 4
 ROLE_EXCERPT = 900
 WORKPAPER_TEXT_LIMIT = 16000
 PLAN_TEXT_LIMIT = 9000
-RECON_ITEM_LIMIT = 1800
+TOPIC_PLAN_TEXT_LIMIT = 16000
+TOPIC_PLAN_EXCERPT_LIMIT = 3000
+TOPIC_LIMIT = 12
 _DOC_LOCK = threading.Lock()
+DISCLAIMER = ("本报告为文本层面的底稿复核提示，不构成审计结论；"
+              "是否形成问题须由审计人员结合证据复核后确定。")
 
 
 class LLMClient:
@@ -171,10 +178,16 @@ def _topic_of(name: str) -> str:
     s = os.path.basename(name)
     s = re.sub(r"\.(docx?|pdf|txt|md)$", "", s, flags=re.I)
     s = re.sub(r"^\s*\d+[\.、]?\s*", "", s)
-    s = s.replace("审计工作底稿", "").replace("《》", "")
+    s = s.replace("《》", "")
+    s = s.replace("审计工作底稿", "")
     s = re.sub(r"^\s*[-－—_]+", "", s).strip()
     s = re.sub(r"\s*-\s*副本$", "", s)
     return s.strip("-_— ") or s
+
+
+def _file_sort_key(name: str) -> tuple:
+    m = re.match(r"\s*(\d+)", os.path.basename(name))
+    return (0, int(m.group(1)), name) if m else (1, 0, name)
 
 
 def _identify_roles(files: list[dict], llm) -> tuple[list[dict], list[dict]]:
@@ -190,7 +203,7 @@ def _identify_roles(files: list[dict], llm) -> tuple[list[dict], list[dict]]:
         else:
             others.append(f)
 
-    if others:
+    if others and llm is not None:
         items = "\n".join(
             f"- {f['name']}：{f.get('text', '')[:ROLE_EXCERPT]}" for f in others)
         try:
@@ -217,6 +230,7 @@ def _identify_roles(files: list[dict], llm) -> tuple[list[dict], list[dict]]:
         f["role"] = "workpaper"
         f["unit"] = _unit_of(f["name"], f.get("text", ""))
         f["topic"] = _topic_of(f["name"])
+    workpapers.sort(key=lambda w: _file_sort_key(w["name"]))
     return plans, workpapers
 
 
@@ -236,6 +250,44 @@ def _plan_excerpt(plan: dict | None, topic: str, limit: int = PLAN_TEXT_LIMIT) -
     return text[:limit]
 
 
+def _topic_plan_excerpt(plan: dict | None, topic: str, limit: int = TOPIC_PLAN_EXCERPT_LIMIT) -> str:
+    """截取方案「审计内容和重点」中该事项的正文，避免混入后续审计程序章节。"""
+    text = re.sub(r"\r\n?", "\n", (plan or {}).get("text", "") or "")
+    if not text.strip():
+        return "（未提供对应审计实施方案）"
+    body = text
+    heading = re.search(r"(?:^|\n)\s*审计内容和重点\s*\n", text)
+    if heading:
+        body = text[heading.start():]
+    next_chapter = re.search(
+        r"\n\s*(?:审计程序及措施|审计程序|审计策略|审计工作组织与人员安排)\s*\n", body)
+    if next_chapter:
+        body = body[:next_chapter.start()]
+
+    title = str(topic or "").strip()
+    start = body.find(title) if title else -1
+    if start < 0:
+        # 方案表述与底稿标题略有出入时，按字符重合度定位最接近的一行。
+        chars = {c for c in re.sub(r"[\s、，,；;：:（）()《》“”]", "", title) if c.strip()}
+        best_pos, best_hit, pos = -1, 0, 0
+        for line in body.split("\n"):
+            hit = sum(1 for c in chars if c in line)
+            if hit > best_hit:
+                best_pos, best_hit = pos, hit
+            pos += len(line) + 1
+        if chars and best_hit >= max(2, len(chars) // 2):
+            start = best_pos
+    if start < 0:
+        return _plan_excerpt(plan, topic, limit)
+
+    segment = body[start:]
+    tail = segment[len(title):] if title else segment
+    next_topic = re.search(r"\n\s*（[一二三四五六七八九十百]+）", tail)
+    if next_topic:
+        segment = segment[:len(title) + next_topic.start()]
+    return segment[:limit].strip()
+
+
 def _numbered(text: str, limit: int) -> str:
     lines = [re.sub(r"\s+", " ", x).strip() for x in (text or "").splitlines()]
     lines = [x for x in lines if x]
@@ -247,7 +299,7 @@ def _numbered(text: str, limit: int) -> str:
 
 
 def _match_plan(wp: dict, plans: list[dict]) -> dict | None:
-    unit = wp.get("unit", "")
+    unit = (wp or {}).get("unit", "")
     if unit:
         for p in plans:
             if unit in p["name"] or unit in p.get("text", "")[:4000]:
@@ -255,224 +307,198 @@ def _match_plan(wp: dict, plans: list[dict]) -> dict | None:
     return plans[0] if plans else None
 
 
-def _normalize_issues(raw, source: str) -> list[dict]:
-    out = []
-    for it in raw if isinstance(raw, list) else []:
-        if not isinstance(it, dict):
-            continue
-        out.append({
-            "dimension": str(it.get("dimension") or "").strip(),
-            "level": str(it.get("level") or "待核实异常").strip(),
-            "title": str(it.get("title") or "待核实事项").strip(),
-            "fact": str(it.get("fact") or "").strip(),
-            "quote": str(it.get("quote") or "").strip(),
-            "locate": str(it.get("locate") or f"{source} · L1").strip(),
-            "basis": str(it.get("basis") or "").strip(),
-            "analysis": str(it.get("analysis") or "").strip(),
-            "impact": str(it.get("impact") or "").strip(),
-            "suggestion": str(it.get("suggestion") or "").strip(),
-            "source": source,
-        })
-    return out
-
-
-def _audit_one(wp: dict, plan: dict | None, llm) -> list[dict]:
-    raw = llm.chat(
-        AUDIT_SYSTEM,
-        AUDIT_USER.format(
-            plan=_plan_excerpt(plan, wp.get("topic", "")),
-            name=wp["name"],
-            text=_numbered(wp.get("text", ""), WORKPAPER_TEXT_LIMIT),
-        ),
-    )
-    issues = _normalize_issues(raw, wp["name"])
-    return issues[:8]
-
-
-def _audit_all(workpapers: list[dict], plans: list[dict], llm, task) -> tuple[list[dict], list[str]]:
-    _update(task, stage="复核审计底稿")
-    issues, errors = [], []
-    for idx, wp in enumerate(workpapers):
-        _update(task, done=idx)
+def _extract_topics(plans: list[dict], llm, workpapers: list[dict] | None = None) -> tuple[list[dict], str]:
+    """提取审核事项骨架；无上位文件或提取失败时退化为按底稿事项生成。"""
+    workpapers = workpapers or []
+    error = ""
+    topics: list[dict] = []
+    if plans:
+        plan_text = "\n\n".join(
+            f"### {p['name']}\n{p.get('text', '')[:TOPIC_PLAN_TEXT_LIMIT]}" for p in plans)
         try:
-            issues.extend(_audit_one(wp, _match_plan(wp, plans), llm))
+            raw = llm.chat(TOPIC_SYSTEM, TOPIC_USER.format(plan=plan_text))
         except Exception as exc:
-            errors.append(f"{wp['name']} 底稿复核失败：{type(exc).__name__}")
-    for i, it in enumerate(issues, 1):
-        it["index"] = i
-    return issues, errors
+            error = f"审计事项提取失败：{type(exc).__name__}"
+        else:
+            for row in raw if isinstance(raw, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                title = str(row.get("topic") or "").strip()
+                if not title:
+                    continue
+                topics.append({
+                    "index": len(topics) + 1,
+                    "topic": re.sub(r"^[（(][一二三四五六七八九十百]+[）)]\s*", "", title),
+                    "source": str(row.get("source") or "").strip(),
+                })
+    if not topics and workpapers:
+        for wp in sorted(workpapers, key=lambda w: _file_sort_key(w["name"])):
+            title = wp.get("topic") or _topic_of(wp["name"])
+            if title:
+                topics.append({"index": len(topics) + 1, "topic": title, "source": ""})
+    if not topics:
+        error = error or "未能提取到审计事项，且未识别到可用底稿"
+    return topics[:TOPIC_LIMIT], error
 
 
-def _reconcile(plans: list[dict], workpapers: list[dict], llm) -> tuple[list[dict], str]:
-    if not plans and len(workpapers) < 2:
-        return [], "未提供审计实施方案且底稿不足两份，无法跨文件勾稽"
-    plan_text = "\n\n".join(f"### {p['name']}\n{p.get('text', '')[:PLAN_TEXT_LIMIT]}"
-                            for p in plans)
-    items = "\n".join(
-        f"- {w['name']} / 单位：{w.get('unit') or '未识别'} / 事项：{w.get('topic') or '未识别'}\n"
-        f"  {w.get('text', '')[:RECON_ITEM_LIMIT]}" for w in workpapers)
-    try:
-        raw = llm.chat(RECON_SYSTEM, RECON_USER.format(plans=plan_text or "（无）", items=items))
-    except Exception as exc:
-        return [], f"跨文件勾稽失败：{type(exc).__name__}"
-    out = []
-    for row in raw if isinstance(raw, list) else []:
-        if not isinstance(row, dict):
-            continue
-        out.append({
-            "field": str(row.get("field") or "").strip(),
-            "files": str(row.get("files") or "").strip(),
-            "value_a": str(row.get("value_a") or "").strip(),
-            "value_b": str(row.get("value_b") or "").strip(),
-            "note": str(row.get("note") or "").strip(),
-        })
-    return out[:20], ""
+_PUNCT = r"[\s、，,；;：:（）()《》“”\"'—\-\.]+"
 
 
-REQUIREMENT_LIMIT = 12
-ASSESS_WP_LIMIT = 3200
-ASSESS_WP_COUNT = 4
+def _topic_keys(topic: str) -> list[str]:
+    """用二元组做事项名与底稿文件名的模糊匹配，避免长短语无法命中。"""
+    clean = re.sub(_PUNCT, "", str(topic or ""))
+    if len(clean) < 2:
+        return [clean] if clean else []
+    keys = {clean[i:i + 2] for i in range(len(clean) - 1)}
+    return sorted(keys)
 
 
-def _extract_requirements(plans: list[dict], llm) -> tuple[list[dict], str]:
-    """从上位文件提取需要底稿落实的要求点。"""
-    if not plans:
-        return [], "未提供审计实施方案，无法提取上位文件要求点"
-    plan_text = "\n\n".join(
-        f"### {p['name']}\n{p.get('text', '')[:PLAN_TEXT_LIMIT]}" for p in plans)
-    try:
-        raw = llm.chat(REQUIREMENT_SYSTEM, REQUIREMENT_USER.format(plan=plan_text))
-    except Exception as exc:
-        return [], f"要求点提取失败：{type(exc).__name__}"
-    out = []
-    for row in raw if isinstance(raw, list) else []:
-        if not isinstance(row, dict):
-            continue
-        req = str(row.get("requirement") or "").strip()
-        if not req:
-            continue
-        out.append({
-            "id": str(row.get("id") or f"R{len(out) + 1}").strip(),
-            "requirement": req,
-            "scope": str(row.get("scope") or "").strip(),
-            "source": str(row.get("source") or "").strip(),
-        })
-    return out[:REQUIREMENT_LIMIT], ""
+def _match_workpaper(topic: dict, workpapers: list[dict]) -> dict | None:
+    """按事项名与底稿事项/文件名/正文的关键词重合度选最相关的 1 份底稿。"""
+    title = str((topic or {}).get("topic") or "")
+    keys = _topic_keys(title)
+    if not keys or not workpapers:
+        return None
+    whole = re.sub(_PUNCT, "", title)
+    best, best_score = None, 0.0
+    for wp in workpapers:
+        name = re.sub(_PUNCT, "", wp.get("name", ""))
+        wp_topic = re.sub(_PUNCT, "", wp.get("topic", ""))
+        head = (wp.get("text", "") or "")[:4000]
+        name_hits = sum(1 for k in keys if k in name)
+        topic_hits = sum(1 for k in keys if k in wp_topic)
+        text_hits = sum(1 for k in keys if k in head)
+        score = (3.0 * topic_hits + 2.0 * name_hits + 0.3 * text_hits) / len(keys)
+        if whole and (whole in wp_topic or whole in name):
+            score += 1.0
+        if score > best_score:
+            best, best_score = wp, score
+    return best if best_score >= 0.35 else None
 
 
-def _assess_wp_items(req: dict, workpapers: list[dict]) -> str:
-    """按要求关键词挑最相关的底稿，控制单次核对的输入量。"""
-    keys = [k for k in re.split(r"[、，,；;（）()\s]+", req.get("requirement", "")) if len(k) >= 2]
-    scored = []
-    for w in workpapers:
-        text = w.get("text", "")
-        score = sum(1 for k in keys[:6] if k in text or k in w.get("topic", ""))
-        scored.append((score, w))
-    scored.sort(key=lambda x: -x[0])
-    chunks = []
-    for _, w in scored[:ASSESS_WP_COUNT]:
-        chunks.append(
-            f"- {w['name']}（单位：{w.get('unit') or '未识别'}，事项：{w.get('topic') or '未识别'}）\n"
-            + _numbered(w.get("text", ""), ASSESS_WP_LIMIT))
-    return "\n\n".join(chunks) or "（无可用底稿正文）"
+def _clean_reason(text) -> str:
+    """压缩为一段不超过 100 字的完整表述，避免截断在半句话上。"""
+    reason = re.sub(r"\s+", "", str(text or "").strip())
+    if len(reason) <= 100:
+        return reason
+    head = reason[:100]
+    boundary = max(head.rfind("。"), head.rfind("；"), head.rfind("，"))
+    if boundary >= 40:
+        return head[:boundary].rstrip("，；。") + "。"
+    return head.rstrip("，；。") + "。"
 
 
-def _assess_one(req: dict, workpapers: list[dict], llm) -> dict:
-    raw = llm.chat(ASSESS_SYSTEM, ASSESS_USER.format(
-        requirement=json.dumps(req, ensure_ascii=False),
-        items=_assess_wp_items(req, workpapers),
-    ))
-    if not isinstance(raw, dict):
-        raw = {}
-    result = str(raw.get("result") or "").strip()
-    if result not in ("符合", "不符合", "无法判断"):
-        result = "无法判断"
-    evidence = [str(x).strip() for x in (raw.get("evidence") or []) if str(x).strip()][:2]
-    return {
-        "id": req.get("id", ""),
-        "requirement": req.get("requirement", ""),
-        "scope": req.get("scope", ""),
-        "source": req.get("source", ""),
-        "result": result,
-        "reason": str(raw.get("reason") or "").strip(),
-        "evidence": evidence,
+def _assess_topic(topic: dict, wp: dict | None, plan: dict | None, llm) -> dict:
+    """单事项单底稿判定；异常与材料不足都退化为无法判断，不中断整体。"""
+    item = {
+        "index": int((topic or {}).get("index", 0) or 0),
+        "topic": str((topic or {}).get("topic") or "").strip(),
+        "file": (wp or {}).get("name", ""),
+        "result": "无法判断",
+        "reason": "",
+        "source": str((topic or {}).get("source") or "").strip(),
     }
+    if wp is None:
+        item["reason"] = "未提供对应审计事项的工作底稿，需人工核实"
+        return item
+    try:
+        raw = llm.chat(REPORT_ASSESS_SYSTEM, REPORT_ASSESS_USER.format(
+            topic=item["topic"],
+            plan=_topic_plan_excerpt(plan, item["topic"]),
+            text=_numbered(wp.get("text", ""), WORKPAPER_TEXT_LIMIT),
+        ))
+        if not isinstance(raw, dict):
+            raw = {}
+        result = str(raw.get("result") or "").strip()
+        item["result"] = result if result in ("通过", "不通过", "无法判断") else "无法判断"
+        item["reason"] = _clean_reason(raw.get("reason", "")) or "底稿材料不足，需人工核实"
+    except Exception:
+        item["result"] = "无法判断"
+        item["reason"] = "核对失败，需人工核实"
+    return item
 
 
-def _assess_all(requirements, workpapers, llm, task) -> tuple[list[dict], list[str]]:
-    out, errors = [], []
-    total = len(requirements)
-    for i, req in enumerate(requirements, 1):
-        _update(task, stage="逐项核对底稿", done=i - 1, total=total)
-        try:
-            out.append(_assess_one(req, workpapers, llm))
-        except Exception as exc:
-            errors.append(f"{req.get('id') or '要求点'} 核对失败：{type(exc).__name__}")
-            out.append({
-                "id": req.get("id", ""), "requirement": req.get("requirement", ""),
-                "scope": req.get("scope", ""), "source": req.get("source", ""),
-                "result": "无法判断", "reason": "核对失败，需人工复核", "evidence": [],
-            })
-    _update(task, done=total, total=total)
-    return out, errors
-
-
-def _make_summary(assessments: list[dict]) -> dict:
-    total = len(assessments)
-    passed = [a for a in assessments if a["result"] == "符合"]
-    failed = [a for a in assessments if a["result"] == "不符合"]
-    unknown = [a for a in assessments if a["result"] == "无法判断"]
-    if not total:
-        conclusion = "未能从审计实施方案中提取到可核对的要求点。"
-    elif not failed and not unknown:
-        conclusion = f"实施方案提出的 {total} 项要求，现有底稿均可支撑，判定为符合。"
+def _make_report_summary(items: list[dict]) -> dict:
+    total = len(items)
+    passed = sum(1 for it in items if it.get("result") == "通过")
+    failed = sum(1 for it in items if it.get("result") == "不通过")
+    unknown = sum(1 for it in items if it.get("result") == "无法判断")
+    if failed:
+        conclusion = "❌ 审核不通过"
+    elif total and not unknown:
+        conclusion = "✅ 审核通过"
     else:
-        conclusion = (
-            f"共核对 {total} 项要求：符合 {len(passed)} 项，不符合 {len(failed)} 项，无法判断 {len(unknown)} 项。"
-            "不符合及无法判断项的原因见下方逐项核对。"
-        )
-    return {"total": total, "pass": len(passed), "fail": len(failed),
-            "unknown": len(unknown), "conclusion": conclusion}
+        conclusion = "⚠️ 需补充材料"
+    if total and passed == total:
+        opinion = "所有审核要点均通过，工作底稿完整覆盖审计要求，审计程序执行充分有效。"
+    else:
+        opinion = (f"共 {total} 项审核要点，通过 {passed} 项、不通过 {failed} 项、"
+                   f"无法判断 {unknown} 项。不通过及无法判断项的原因见详细审核结果。")
+    return {"total": total, "pass": passed, "fail": failed, "unknown": unknown,
+            "conclusion": conclusion, "opinion": opinion}
 
 
-def analyze_workpapers(uploaded, task=None, llm=None):
-    """uploaded = [(filename, bytes), ...]。按上位文件要求点逐项判定底稿符合性。"""
-    files = _parse_all(uploaded, task)
-    errors = [f"{f['name']}：{f['error']}" for f in files if f.get("error")]
+def _make_assessments(items: list[dict]) -> list[dict]:
+    """兼容字段：把新的 items 映射成旧的 assessments 结构。"""
+    return [{
+        "id": f"T{it.get('index', i)}",
+        "requirement": it.get("topic", ""),
+        "result": it.get("result", "无法判断"),
+        "reason": it.get("reason", ""),
+        "source": it.get("source", ""),
+        "scope": "",
+        "evidence": [],
+    } for i, it in enumerate(items, 1)]
 
-    plans, workpapers = _identify_roles(files, llm)
-    if not workpapers:
-        return {
-            "unit_count": 0, "file_count": len(files), "plan_count": len(plans),
-            "workpaper_count": 0, "file_roles": [], "requirements": [],
-            "assessments": [], "summary": _make_summary([]),
-            "issues": [], "issue_count": 0, "reconciliation": [], "recon_count": 0,
-            "level_count": {}, "errors": errors + ["未识别到审计工作底稿"],
-            "disclaimer": "本报告为文本层面的底稿复核提示，不构成审计结论。",
-        }
 
-    requirements, req_err = _extract_requirements(plans, llm)
-    if req_err:
-        errors.append(req_err)
-    assessments, assess_errors = _assess_all(requirements, workpapers, llm, task)
-    errors.extend(assess_errors)
-    summary = _make_summary(assessments)
-
+def _build_report(files, plans, workpapers, items, errors) -> dict:
+    summary = _make_report_summary(items)
     units = sorted({w.get("unit") for w in workpapers if w.get("unit")})
     roles = [{
         "name": f["name"], "role": f.get("role", "other"),
         "unit": f.get("unit", ""), "topic": f.get("topic", ""),
         "chars": len(f.get("text", "")),
     } for f in files]
-
-    _update(task, stage="完成", done=task.get("total", len(uploaded)) if task else len(uploaded))
     return {
-        "unit_count": len(units), "file_count": len(files),
-        "plan_count": len(plans), "workpaper_count": len(workpapers),
-        "requirements": requirements, "assessments": assessments, "summary": summary,
+        "items": items,
+        "summary": summary,
+        "unit_count": len(units),
+        "plan_count": len(plans),
+        "workpaper_count": len(workpapers),
+        "file_count": len(files),
         "file_roles": roles,
-        # 兼容旧字段：前端与任务列表不再以问题条数作为主结论
-        "issues": [], "issue_count": 0, "reconciliation": [], "recon_count": 0,
-        "level_count": {}, "errors": errors,
-        "disclaimer": "本报告为文本层面的符合性复核提示，不构成审计结论；是否形成问题须由审计人员结合证据复核后确定。",
+        # 兼容字段：主链路不再以问题条数作为结论。
+        "requirements": [],
+        "assessments": _make_assessments(items),
+        "issues": [], "issue_count": 0,
+        "reconciliation": [], "recon_count": 0,
+        "level_count": {},
+        "errors": errors,
+        "disclaimer": DISCLAIMER,
     }
+
+
+def analyze_workpapers(uploaded, task=None, llm=None):
+    """uploaded = [(filename, bytes), ...]。按审计事项逐项匹配底稿并判定。"""
+    files = _parse_all(uploaded, task)
+    errors = [f"{f['name']}：{f['error']}" for f in files if f.get("error")]
+    plans, workpapers = _identify_roles(files, llm)
+    if not workpapers:
+        errors.append("未识别到审计工作底稿")
+        return _build_report(files, plans, workpapers, [], errors)
+
+    _update(task, stage="提取审核要点")
+    topics, topic_err = _extract_topics(plans, llm, workpapers=workpapers)
+    if topic_err:
+        errors.append(topic_err)
+    total = len(topics)
+    _update(task, total=total, done=0)
+
+    items = []
+    for i, topic in enumerate(topics, 1):
+        _update(task, stage="逐项审核底稿", done=i - 1, total=total)
+        wp = _match_workpaper(topic, workpapers)
+        plan = _match_plan(wp, plans) if wp else (plans[0] if plans else None)
+        items.append(_assess_topic(topic, wp, plan, llm))
+    _update(task, stage="完成", done=total, total=total)
+    return _build_report(files, plans, workpapers, items, errors)

@@ -254,7 +254,7 @@ export interface WorkpaperAssessment {
   reason: string; evidence?: string[]
 }
 export interface WorkpaperSummary {
-  total: number; pass: number; fail: number; unknown: number; conclusion: string
+  total: number; pass: number; fail: number; unknown: number; conclusion?: string; opinion?: string
 }
 export interface WorkpaperDetail {
   taskId: string; unitCount?: number; fileCount?: number; workpaperCount?: number
@@ -262,6 +262,7 @@ export interface WorkpaperDetail {
   levelCount?: Record<string, number>
   requirements?: WorkpaperRequirement[]
   assessments?: WorkpaperAssessment[]
+  items?: Array<{ index?: number; topic: string; file: string; result: string; reason: string; source?: string }>
   summary?: WorkpaperSummary
   issues?: WorkpaperIssue[]; reconciliation?: WorkpaperRecon[]
   fileRoles?: Array<{ name: string; role: string; unit?: string; topic?: string; chars?: number }>

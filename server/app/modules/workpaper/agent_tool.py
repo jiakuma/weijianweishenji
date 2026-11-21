@@ -142,7 +142,14 @@ def detect(args: dict) -> dict:
             pass
     return {"ok": True, "taskId": task["task_id"], "unitCount": report.get("unit_count", 0),
             "files": len(uploaded), "totalIssues": total_issues,
-            "issueCount": int(summary.get("fail", 0)), "reconCount": int(summary.get("unknown", 0))}
+            "issueCount": int(summary.get("fail", 0)), "reconCount": int(summary.get("unknown", 0)),
+            # 带回完整卡片数据：前端当场渲染与会话持久化都依赖 items/summary，
+            # 不再强制依赖二次 get_workpaper_result 查询覆盖。
+            "workpaperCount": report.get("workpaper_count", 0),
+            "fileCount": report.get("file_count", 0),
+            "items": report.get("items", []),
+            "summary": summary,
+            "disclaimer": report.get("disclaimer", "")}
 
 
 def get_result(args: dict) -> dict:
@@ -173,18 +180,22 @@ def get_result(args: dict) -> dict:
 
 
 def _result_payload(task_id, name, report):
+    summary = report.get("summary") or {}
+    issue_count = int(summary.get("fail", 0))
+    recon_count = int(summary.get("unknown", 0))
     return {
         "ok": True, "taskId": task_id, "name": name,
         "unitCount": report.get("unit_count", 0),
         "fileCount": report.get("file_count", 0),
         "workpaperCount": report.get("workpaper_count", 0),
-        "issueCount": report.get("issue_count", 0),
-        "reconCount": report.get("recon_count", 0),
-        "totalIssues": report.get("issue_count", 0) + report.get("recon_count", 0),
+        "issueCount": issue_count,
+        "reconCount": recon_count,
+        "totalIssues": issue_count + recon_count,
         "levelCount": report.get("level_count", {}),
+        "items": report.get("items", []),
         "requirements": report.get("requirements", []),
         "assessments": report.get("assessments", []),
-        "summary": report.get("summary", {}),
+        "summary": summary,
         "issues": report.get("issues", []),
         "reconciliation": report.get("reconciliation", []),
         "fileRoles": report.get("file_roles", []),

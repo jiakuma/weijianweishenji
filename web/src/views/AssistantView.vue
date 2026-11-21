@@ -66,21 +66,24 @@
 
           <div v-else-if="m.workpaper" class="contract-report">
             <div class="contract-report-head">
-              <span>底稿审核：符合 {{ m.workpaper.summary?.pass ?? 0 }} · 不符合 {{ m.workpaper.summary?.fail ?? 0 }} · 无法判断 {{ m.workpaper.summary?.unknown ?? 0 }}</span>
+              <span>文档审核报告</span>
               <el-button size="small" plain @click="exportWorkpaper(m.workpaper.taskId)">{{ t('common.export') }}</el-button>
             </div>
             <div class="contract-sub">被审计单位 {{ m.workpaper.unitCount || 0 }} 家 · 审计底稿 {{ m.workpaper.workpaperCount || 0 }} 份</div>
-            <div v-if="m.workpaper.summary?.conclusion" class="qa-conclusion">{{ m.workpaper.summary.conclusion }}</div>
-            <div v-for="a in m.workpaper.assessments" :key="a.id" class="contract-issue">
-              <div class="contract-issue-head">
-                <span class="contract-no">{{ a.id }}</span>
-                <span class="contract-title">{{ a.requirement }}</span>
-                <span class="contract-level" :class="assessClass(a.result)">{{ a.result }}</span>
-              </div>
-              <div class="contract-kv">{{ a.reason }}</div>
-              <div v-for="(ev, ei) in a.evidence" :key="ei" class="contract-quote">{{ ev }}</div>
+            <div class="contract-section">一、详细审核结果</div>
+            <div v-for="it in workpaperRows(m.workpaper)" :key="it.key" class="wp-item">
+              <div class="wp-item-head">{{ it.no }}. {{ it.topic }}</div>
+              <div class="wp-kv">对应文件：{{ it.file }}</div>
+              <div class="wp-kv" :class="it.resultClass">审核结果：{{ it.resultText }}</div>
+              <div class="wp-kv">{{ it.reasonLabel }}{{ it.reason }}</div>
             </div>
-            <div v-if="!m.workpaper.summary?.total" class="qa-conclusion">未能从上位文件中提取到可核对的要求点</div>
+            <div v-if="!m.workpaper.summary?.total" class="qa-conclusion">未能从上位文件中提取到可核对的审计事项</div>
+            <div class="contract-section">二、总体审核结果</div>
+            <div class="wp-kv">审核要点总数：{{ m.workpaper.summary?.total || 0 }} 项</div>
+            <div class="wp-kv wp-pass">✅ 审核通过：{{ m.workpaper.summary?.pass || 0 }} 项</div>
+            <div class="wp-kv wp-fail">❌ 审核不通过：{{ m.workpaper.summary?.fail || 0 }} 项</div>
+            <div class="wp-kv">总体审核结果：{{ m.workpaper.summary?.conclusion }}</div>
+            <div v-if="m.workpaper.summary?.opinion" class="wp-kv">总体审核意见：{{ m.workpaper.summary.opinion }}</div>
           </div>
 
           <div v-else-if="m.conflict && !m.conflict.conflicts?.length" class="qa-conclusion">
@@ -532,15 +535,8 @@ async function runAgent(q: string, files?: string[]) {
           m.contract = data as unknown as ContractDetail
         }
         if (action.tool === 'audit_workpaper' && action.ok && data.taskId) {
-          m.workpaper = {
-            taskId: String(data.taskId),
-            unitCount: Number(data.unitCount || 0),
-            workpaperCount: Number(data.workpaperCount || 0),
-            totalIssues: Number(data.totalIssues || 0),
-            issueCount: Number(data.issueCount || 0),
-            reconCount: Number(data.reconCount || 0),
-            issues: [], reconciliation: [],
-          }
+          // 后端已改为输出 items/summary 报告结构，整体透传避免丢字段。
+          m.workpaper = { ...data } as unknown as WorkpaperDetail
           m.workpaperStage = t('assistant.finalizing')
         }
         if (action.tool === 'get_workpaper_result' && action.ok && data.issues) {
@@ -726,10 +722,46 @@ function levelClass(level: string) {
   return 'lv-low'
 }
 
-function assessClass(result: string) {
-  if (result === '符合') return 'lv-low'
-  if (result === '不符合') return 'lv-high'
-  return 'lv-mid'
+interface WorkpaperRow {
+  key: string
+  no: string | number
+  topic: string
+  file: string
+  resultText: string
+  resultClass: string
+  reasonLabel: string
+  reason: string
+}
+
+type WorkpaperRowSource =
+  | NonNullable<WorkpaperDetail['items']>[number]
+  | NonNullable<WorkpaperDetail['assessments']>[number]
+
+/**
+ * 把新版 items 与旧版 assessments 归一为同一行结构，供报告卡片直接渲染。
+ * 结果文案与配色统一按“通过 / 不通过 / 无法判断”三态呈现。
+ */
+function workpaperRows(wp: WorkpaperDetail | undefined): WorkpaperRow[] {
+  const source: WorkpaperRowSource[] = wp?.items?.length ? wp.items : (wp?.assessments || [])
+  return source.map((raw, i) => {
+    const it = raw as WorkpaperRowSource
+    const topic = 'topic' in it ? (it.topic || '') : (it.requirement || '')
+    const file = 'file' in it ? (it.file || '') : (it.source || '')
+    const no = 'index' in it ? (it.index ?? i + 1) : i + 1
+    const result = String(it.result || '')
+    const failed = result.includes('不通过') || result.includes('不符合')
+    const passed = !failed && (result.includes('通过') || result.includes('符合'))
+    return {
+      key: `${no}-${topic}-${i}`,
+      no,
+      topic,
+      file,
+      resultText: failed ? '❌ 审核不通过' : passed ? '✅ 审核通过' : '⚠️ 无法判断',
+      resultClass: failed ? 'wp-fail' : passed ? 'wp-pass' : 'wp-unknown',
+      reasonLabel: failed ? '不通过原因：' : passed ? '通过原因：' : '说明：',
+      reason: it.reason || '',
+    }
+  })
 }
 
 let runningTimer = 0
@@ -897,6 +929,12 @@ onUnmounted(() => {
 .contract-level.lv-low { background: #e8f3ea; color: #2f7a46; }
 .contract-kv { font-size: 12.5px; line-height: 1.65; margin-top: 4px; }
 .contract-kv b { color: var(--sub); font-weight: 600; }
+.wp-item { margin: 12px 0; }
+.wp-item-head { font-weight: 600; }
+.wp-kv { color: var(--sub); font-size: 13px; line-height: 1.7; margin-top: 3px; }
+.wp-pass { color: #2e7d32; }
+.wp-fail { color: #c62828; }
+.wp-unknown { color: #8a8a8a; }
 .contract-quote { background: var(--surface-soft); border-left: 3px solid var(--primary-light, #9db8f0); border-radius: 5px; padding: 6px 10px; margin: 6px 0; font-size: 12px; line-height: 1.6; }
 .conflict-report { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .conflict-report-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; font-weight: 600; color: #cf4d45; }
