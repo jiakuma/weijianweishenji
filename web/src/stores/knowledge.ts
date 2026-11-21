@@ -73,9 +73,10 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
       return null
     }
   }
-  async function removeQaSession(id: string) {
+  async function removeQaSession(id: string, module = '') {
     await api.deleteSession(id)
-    await loadQaSessions()
+    // 必须按当前模块重载，否则会把其他模块的会话（含空的新会话）混进侧边栏。
+    await loadQaSessions(module)
     if (qaSessionId.value === id) {
       const next = qaSessions.value[0]
       qaSessionId.value = next ? next.id : ''

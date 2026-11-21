@@ -200,7 +200,7 @@ async function newSessionFromSidebar() {
   if (id) store.requestQaSessionSwitch(id, currentModule.value)
 }
 async function removeSessionFromSidebar(id: string) {
-  await store.removeQaSession(id)
+  await store.removeQaSession(id, currentModule.value)
   if (store.qaSessionId) store.requestQaSessionSwitch(store.qaSessionId, currentModule.value)
 }
 async function pickSessionMobile(id: string) {
