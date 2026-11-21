@@ -28,6 +28,7 @@ from .db import (
     now_str,
 )
 from .search import recall_regulations, search_hits
+from .violation_judge import judge_violation
 
 log = logging.getLogger("knowledge.agent")
 
@@ -225,6 +226,12 @@ def _recall_regulations(args: dict) -> dict:
     return recall_regulations(args["query"], limit=min(limit, 50))
 
 
+def _judge_violation(args: dict) -> dict:
+    """现象违规判定参考：历史定性匹配 + 制度条款反查，仅提示不定性。"""
+    limit = int(args.get("limit") or 6)
+    return judge_violation(args["phenomenon"], limit=min(limit, 10))
+
+
 def _read_fulltext(args: dict) -> dict:
     with SessionLocal() as s:
         row = s.get(DocumentFulltext, args["docId"])
@@ -289,6 +296,24 @@ register(ToolSpec(
         "limit": {"type": "integer", "minimum": 1, "maximum": 50},
     }, "required": ["query"]},
     readonly=True, handler=_recall_regulations,
+))
+
+register(ToolSpec(
+    name="judge_violation", label="违规判定参考",
+    description=(
+        "当用户描述某种审计现象，询问「是否违反制度 / 有什么依据 / 有没有法条 / "
+        "以前的审计问题里有没有类似情况」时使用（如「差旅费超标准报销是否违规，依据是什么」）。"
+        "本工具先匹配历史审计问题库中的相似问题及其定性依据，再反查制度库中的相关条款原文，"
+        "返回历史参考与制度依据及可点击引用。"
+        "助手只做检索与提示，不构成违规定性；最终定性须由审计人员复核。"
+        "与 recall_regulations 的区别：recall_regulations 只按主题盘点制度清单，"
+        "本工具面向具体现象，额外给出历史审计问题参考。"
+    ),
+    parameters={"type": "object", "properties": {
+        "phenomenon": {"type": "string", "maxLength": 200},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+    }, "required": ["phenomenon"]},
+    readonly=True, handler=_judge_violation,
 ))
 
 register(ToolSpec(

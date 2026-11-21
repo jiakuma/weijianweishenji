@@ -195,7 +195,11 @@ _SYSTEM_NATIVE = (
     "8. 当用户想找某类制度、询问库里有哪些相关制度/规定（如「差旅费有哪些制度」「预算管理相关的制度都有什么」）时，"
     "调用 recall_regulations 而不是 search_docs，它返回文档级制度清单；search_docs 只返回碎片切片。"
     "助手只做检索与提示，制度适用与定性须由审计人员复核。\n"
-    "9. 不要输出 JSON 以外的任何内容。"
+    "9. 当用户描述某种现象并问「是否违规 / 违反什么制度 / 有什么依据 / 有没有法条 / "
+    "以前有没有类似审计问题」时，调用 judge_violation，它返回历史相似问题及其定性依据、"
+    "以及反查到的制度条款原文和可点击引用；不要只用 search_docs 或凭空判断。"
+    "回答时明确说明这是相似性参考，不构成违规定性，最终定性须由审计人员复核。\n"
+    "10. 不要输出 JSON 以外的任何内容。"
 )
 
 _FINAL_SYSTEM = (
@@ -223,6 +227,9 @@ _SYSTEM_JSON = (
     "当用户要求查制度冲突/互斥时，必须直接调用 detect_conflict。不要先查导入任务，也不要回答「没收到文件」。"
     "当用户想找某类制度、询问库里有哪些相关制度/规定时，调用 recall_regulations 而不是 search_docs，"
     "它返回文档级制度清单；助手只做检索与提示，制度适用与定性须由审计人员复核。"
+    "当用户描述某种现象并问「是否违规 / 违反什么制度 / 有什么依据 / 有没有法条 / "
+    "以前有没有类似审计问题」时，调用 judge_violation，它返回历史相似问题及定性依据、"
+    "制度条款原文和可点击引用；回答时说明这是相似性参考，不构成违规定性，须由审计人员复核。"
     "不要输出 JSON 以外的任何内容。"
 )
 
@@ -582,7 +589,7 @@ def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
                     # 工具执行耗时从总超时预算中扣除：制度互斥检测等长任务不应
                     # 因自身耗时（可能 > TOTAL_TIMEOUT）拖垮整个 agent 的判定。
                     tool_time += (result.get("costMs") or 0) / 1000.0
-                    if result.get("ok") and call.name in ("search_docs", "recall_regulations"):
+                    if result.get("ok") and call.name in ("search_docs", "recall_regulations", "judge_violation"):
                         for h in (result.get("data") or {}).get("hits", []):
                             if len(pool) >= MAX_POOL:
                                 break
@@ -592,7 +599,7 @@ def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
                 # 失败换路：空结果/异常时给模型明确的重试提示，连续两次则收尾
                 if confirmed != "n/a" and not result.get("ok"):
                     hints.append("该写操作未获用户同意，不要重复尝试同类操作，直接说明情况。")
-                elif result.get("ok") and call.name in ("search_docs", "recall_regulations"):
+                elif result.get("ok") and call.name in ("search_docs", "recall_regulations", "judge_violation"):
                     total = (result.get("data") or {}).get("total", 0)
                     if total == 0:
                         empty_streak += 1
