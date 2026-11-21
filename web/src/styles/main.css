@@ -89,6 +89,10 @@ a { color: var(--primary); text-decoration: none; }
 .page-body > .page { flex: 1; min-width: 0; }
 .page { max-width: 1400px; margin: 0 auto; height: 100%; }
 
+/* 聊天页：高度链锁定，消息区自滚、输入区固定底部 */
+.main-scroll.is-chat { overflow: hidden; }
+.main-scroll.is-chat .page-body { height: 100%; min-height: 0; }
+
 /* ---------- module nav ---------- */
 .nav-group { padding: 12px 12px 4px; font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: .4px; }
 .nav-item.is-disabled { color: var(--muted); cursor: default; opacity: .72; }

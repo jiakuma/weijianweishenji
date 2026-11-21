@@ -44,7 +44,7 @@
         <span class="topbar-title">{{ t('app.name') }}</span>
       </header>
 
-      <main class="main-scroll">
+      <main class="main-scroll" :class="{ 'is-chat': isQa }">
         <div class="page-body">
           <!-- 会话栏在顶栏之下，不再与顶栏并排，所有页面共用同一条顶栏 -->
           <aside v-if="isQa" class="qa-rail">

@@ -321,10 +321,13 @@ function displayQuestion(text: string): string {
 }
 
 function scrollToEnd() {
-  nextTick(() => {
-    const el = listEl.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
+  // keep-alive 切回时 DOM 可能要跨帧才完成布局，双 nextTick + rAF 保证滚到底。
+  nextTick(() => nextTick(() => {
+    requestAnimationFrame(() => {
+      const el = listEl.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
+  }))
 }
 
 async function loadSessions() {
@@ -387,7 +390,11 @@ async function recoverSession() {
   const target = store.qaSessions.find((s) => s.id === remembered) || store.qaSessions[0]
   if (target) {
     if (sessionId.value !== target.id) await switchSession(target.id)
-    else store.qaSessionId = target.id
+    else {
+      store.qaSessionId = target.id
+      // 会话没变时 switchSession 不会执行，这里补一次滚动。
+      scrollToEnd()
+    }
   } else {
     await newSession()
   }
@@ -764,8 +771,13 @@ onMounted(async () => {
   ensureRunningSync()
 })
 
-// 从别的模块/页面切回来时，恢复到本模块最后一次对话的会话并校正侧边栏高亮。
-onActivated(() => { void recoverOnce(); void syncRunning(); ensureRunningSync() })
+// 从别的模块/页面切回来时，恢复到本模块最后一次对话的会话、校正高亮，
+// 并滚动到最后一条消息，避免长对话每次都要手动往下拉。
+onActivated(() => {
+  void recoverOnce().then(() => scrollToEnd())
+  void syncRunning()
+  ensureRunningSync()
+})
 
 onUnmounted(() => {
   store.setQaSwitchHandler(moduleKey.value, null)
@@ -777,7 +789,7 @@ onUnmounted(() => {
 .qa-shell { display: flex; flex-direction: column; height: 100%; max-width: 860px; margin: 0 auto; }
 .qa-shell.is-empty .qa-list { justify-content: center; }
 
-.qa-list { flex: 1; overflow-y: auto; padding: 14px 2px 16px; display: flex; flex-direction: column; gap: 14px; }
+.qa-list { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 2px 16px; display: flex; flex-direction: column; gap: 14px; }
 
 .qa-empty { text-align: center; padding: 8px 0 28px; }
 .qa-empty-hint { font-size: 14px; color: var(--sub); margin-bottom: 18px; }
