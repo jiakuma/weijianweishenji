@@ -2,6 +2,10 @@
 import axios, { type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios'
 
 const BASE = String(import.meta.env.VITE_API_BASE ?? '').replace(/\/$/, '')
+// local 模式用 x-access-token header，不需要 cookie；跨域携带 cookie 会触发
+// 浏览器要求 Access-Control-Allow-Credentials，后端未开启时会拦截所有响应。
+// 仅 SSO 跨域部署时设为 true，并确保后端 allow_credentials 同步开启。
+const WITH_CREDENTIALS = String(import.meta.env.VITE_WITH_CREDENTIALS ?? '').toLowerCase() === 'true'
 const TOKEN_KEY = 'kb-access-token'
 
 export type ApiResult<T> = { data: T | null; error: string | null }
@@ -28,8 +32,7 @@ export function failMessage(status: number, path: string): string {
 const http = axios.create({
   baseURL: BASE,
   timeout: 120000,
-  // 中台 SSO 依赖同域 cookie；local 模式下同源携带也无害
-  withCredentials: true,
+  withCredentials: WITH_CREDENTIALS,
 })
 
 function attachToken(config: InternalAxiosRequestConfig): InternalAxiosRequestConfig {
@@ -113,7 +116,7 @@ export async function streamRequest(
       'Content-Type': 'application/json',
       ...(token ? { 'X-Access-Token': token } : {}),
     },
-    credentials: 'include',
+    credentials: WITH_CREDENTIALS ? 'include' : 'same-origin',
     body: JSON.stringify(body),
     signal,
   })
