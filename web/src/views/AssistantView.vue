@@ -342,9 +342,18 @@ function rowsToMessages(rows: import('@/types').QAResult[]): Msg[] {
   ])
 }
 
+function lastSessionKey(): string {
+  return `audit-last-session-${moduleKey.value}`
+}
+
+function rememberSession(id: string) {
+  try { localStorage.setItem(lastSessionKey(), id) } catch { /* 隐私模式下忽略 */ }
+}
+
 async function switchSession(id: string) {
   sessionId.value = id
   store.qaSessionId = id
+  rememberSession(id)
   try {
     messages.value = rowsToMessages(await api.getSession(id))
   } catch {
@@ -360,7 +369,28 @@ async function newSession() {
     return
   }
   sessionId.value = id
+  store.qaSessionId = id
+  rememberSession(id)
   messages.value = []
+}
+
+// 每次进入本模块都恢复到「最后一次对话的会话」：
+// 优先用本模块记住的会话，失效则取后端按 updated_at 倒序返回的第一条。
+// 同时把全局 qaSessionId 校正回来，避免被其他模块覆盖导致侧边栏高亮丢失。
+async function recoverSession() {
+  store.setQaSwitchHandler(moduleKey.value, (id: string) => void switchSession(id))
+  try {
+    await loadSessions()
+  } catch { /* 列表加载失败不阻断问答 */ }
+  let remembered = ''
+  try { remembered = localStorage.getItem(lastSessionKey()) || '' } catch { /* ignore */ }
+  const target = store.qaSessions.find((s) => s.id === remembered) || store.qaSessions[0]
+  if (target) {
+    if (sessionId.value !== target.id) await switchSession(target.id)
+    else store.qaSessionId = target.id
+  } else {
+    await newSession()
+  }
 }
 
 function useSuggest(q: string) {
@@ -377,6 +407,7 @@ async function send() {
       const s = await api.createSession(moduleKey.value)
       sessionId.value = s.id
       store.qaSessionId = s.id
+      rememberSession(s.id)
     } catch {
       /* 会话创建失败不阻断提问，下方流式启动前会再尝试一次 */
     }
@@ -449,6 +480,7 @@ async function runAgent(q: string, files?: string[]) {
       const s = await api.createSession(moduleKey.value)
       sessionId.value = s.id
       store.qaSessionId = s.id
+      rememberSession(s.id)
     }
     await api.streamAgentQuestion(q, '混合', sessionId.value, {
       onStart: (rid, qaId) => {
@@ -719,17 +751,21 @@ function ensureRunningSync() {
   runningTimer = window.setInterval(() => void syncRunning(), 3000)
 }
 
+// 防止 onMounted 与首次 onActivated 重叠导致重复恢复/重复请求。
+let recovering = false
+async function recoverOnce() {
+  if (recovering) return
+  recovering = true
+  try { await recoverSession() } finally { recovering = false }
+}
+
 onMounted(async () => {
-  await loadSessions()
-  store.setQaSwitchHandler(moduleKey.value, (id: string) => void switchSession(id))
-  const first = store.qaSessions[0]
-  if (first) await switchSession(first.id)
-  else await newSession()
+  await recoverOnce()
   ensureRunningSync()
 })
 
-// 从别的页面切回来时立即同步一次，并保证轮询在运行（覆盖刷新/长时间离开）。
-onActivated(() => { void syncRunning(); ensureRunningSync() })
+// 从别的模块/页面切回来时，恢复到本模块最后一次对话的会话并校正侧边栏高亮。
+onActivated(() => { void recoverOnce(); void syncRunning(); ensureRunningSync() })
 
 onUnmounted(() => {
   store.setQaSwitchHandler(moduleKey.value, null)
