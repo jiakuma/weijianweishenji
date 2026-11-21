@@ -277,8 +277,15 @@ async def lifespan(_: FastAPI):
     # 存量切片补进向量库，放后台线程避免模型首次加载拖慢启动
     import threading
     from . import milvus_store
-    threading.Thread(target=milvus_store.sync_all, daemon=True,
-                     name="milvus-sync").start()
+
+    def _sync_worker() -> None:
+        # 向量库只是检索增强能力：数据目录损坏/索引缺失时不得影响平台启动。
+        try:
+            milvus_store.sync_all()
+        except Exception:
+            pass
+
+    threading.Thread(target=_sync_worker, daemon=True, name="milvus-sync").start()
     yield
 
 

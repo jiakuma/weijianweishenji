@@ -6,20 +6,32 @@
 """
 from __future__ import annotations
 
-import os
 import threading
 from pathlib import Path
 
-from .db import BASE_DIR, Chunk, Document, SessionLocal
+from .config import settings
+from .db import Chunk, Document, SessionLocal
 
 COLLECTION = "knowledge_chunks"
-MILVUS_URI = os.getenv("MILVUS_URI") or str(BASE_DIR / "data" / "milvus.db")
+MILVUS_URI = settings.MILVUS_URI
 
 _client = None
 _lock = threading.Lock()
 _failed = False
 _dim = 512
 _dim_checked = False
+
+
+def _mark_failed() -> None:
+    """熔断向量库：数据目录或索引损坏时，避免每条请求重复触发底层异常。"""
+    global _client, _failed
+    _failed = True
+    stale, _client = _client, None
+    if stale is not None:
+        try:
+            stale.close()
+        except Exception:
+            pass
 
 
 def _client_or_none():
@@ -31,12 +43,27 @@ def _client_or_none():
     with _lock:
         if _client is not None:
             return _client
+        if _failed:
+            return None
+        client = None
         try:
             from pymilvus import MilvusClient
             Path(MILVUS_URI).parent.mkdir(parents=True, exist_ok=True)
-            _client = MilvusClient(uri=MILVUS_URI)
+            client = MilvusClient(uri=MILVUS_URI)
+            # 健康探活：已存在的 collection 在 load 时会校验索引文件。
+            # Milvus Lite 的 HNSW 索引由 faiss 写入，Windows 中文路径下 faiss
+            # 用窄字符 fopen 无法写入，索引文件缺失会在这一步抛 MilvusException。
+            # 就地熔断，避免异常散落到导入、检索、后台同步各条链路。
+            if client.has_collection(COLLECTION):
+                client.load_collection(COLLECTION)
+            _client = client
         except Exception:
             _failed = True
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
             return None
     return _client
 
@@ -112,6 +139,7 @@ def upsert_document(doc_id: str, doc_title: str, chunks: list[dict]) -> bool:
             client.upsert(collection_name=COLLECTION, data=rows)
         return True
     except Exception:
+        _mark_failed()
         return False
 
 
@@ -186,6 +214,7 @@ def sync_all() -> int:
                                 output_fields=['chunk_id'], limit=16384)
             existing = {str(r.get("chunk_id") or "") for r in rows}
         except Exception:
+            _mark_failed()
             existing = set()
     done = 0
     with SessionLocal() as s:

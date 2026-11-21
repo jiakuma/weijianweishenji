@@ -38,6 +38,8 @@ npm run dev                      # 默认 5280
 
 完整环境变量说明见 `.env.template`。`DB_BACKEND=postgres` 时连接 PostgreSQL 15 并执行 Alembic 迁移；`DB_BACKEND=sqlite` 为本地单机降级路径，仅用于开发验证。
 
+Milvus Lite 向量库默认数据目录为 `%LOCALAPPDATA%/audit-work-platform/milvus.db`（纯 ASCII 路径）。faiss 的 C++ 文件写入在 Windows 中文代码页下无法打开含中文的 UTF-8 路径，会导致 HNSW 索引文件无法生成，因此默认目录避开项目中文路径。项目内旧目录 `server/data/milvus.db` 保留作为备份；可通过环境变量 `MILVUS_URI` 覆盖为独立部署的 Milvus 服务地址或其他路径。
+
 ## 验证
 
 ```bash

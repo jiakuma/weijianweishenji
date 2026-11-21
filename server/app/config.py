@@ -37,6 +37,23 @@ def _bool(name: str, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def _default_milvus_uri() -> str:
+    """向量库默认路径：LOCALAPPDATA 下的纯 ASCII 路径。
+
+    faiss C++ 层在 Windows GBK 代码页下无法打开含中文的 UTF-8 路径，
+    会导致 HNSW 索引文件写不出来，故默认目录避开项目中文路径。
+    仍可用 MILVUS_URI 环境变量覆盖为独立部署的 Milvus 服务或其他路径。
+    """
+    local = _env("LOCALAPPDATA")
+    if local:
+        base = Path(local)
+    elif os.name == "nt":
+        base = Path.home() / "AppData" / "Local"
+    else:
+        base = Path.home() / ".local" / "share"
+    return str(base / "audit-work-platform" / "milvus.db")
+
+
 class Settings:
     APP_NAME: str = _env("APP_NAME", "audit-work-platform")
     APP_HOST: str = _env("APP_HOST", "0.0.0.0")
@@ -80,7 +97,7 @@ class Settings:
     LLM_API_KEY: str = _env("LLM_API_KEY")
     LLM_MODEL: str = _env("LLM_MODEL")
 
-    MILVUS_URI: str = _env("MILVUS_URI")
+    MILVUS_URI: str = _env("MILVUS_URI", _default_milvus_uri())
     EMBED_MODEL: str = _env("EMBED_MODEL", "BAAI/bge-small-zh-v1.5")
 
     def validate(self) -> None:
