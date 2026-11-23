@@ -68,9 +68,6 @@
       <div class="card card-pad">
         <div class="section-title">资料信息</div>
         <el-form label-width="76px" label-position="left" @submit.prevent>
-          <el-form-item label="分类">
-            <span class="cat-readonly">{{ doc?.category || '未分类' }}</span>
-          </el-form-item>
           <el-form-item label="标签">
             <div class="tag-editor">
               <el-tag
@@ -272,15 +269,5 @@ watch(() => route.params.id, () => void load())
 }
 .tag-editor .tag-input :deep(.el-input__wrapper) {
   background: var(--el-fill-color-blank);
-}
-.cat-readonly {
-  display: inline-block;
-  padding: 4px 10px;
-  font-size: 13px;
-  line-height: 1.4;
-  color: var(--el-text-color-regular);
-  background: var(--el-fill-color-light);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
 }
 </style>

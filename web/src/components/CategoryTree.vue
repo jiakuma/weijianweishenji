@@ -1,5 +1,8 @@
 <template>
   <div class="category-pane">
+    <button class="cat-add" title="新增分类" @click="addCategory">
+      <el-icon><Plus /></el-icon><span>新增分类</span>
+    </button>
     <div class="cat-list">
     <div class="cat-row" :class="{ 'is-active': !store.currentCategory }" @click="store.selectCategory('')">
       <span class="cat-caret" />
@@ -45,7 +48,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, ArrowRight, Delete, Folder, FolderOpened } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, Delete, Folder, FolderOpened, Plus } from '@element-plus/icons-vue'
 import { api } from '@/api'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import type { CategoryNode } from '@/types'
@@ -90,6 +93,27 @@ function canDelete(node: CategoryNode): boolean {
   return !node.id.startsWith('__direct__') && node.name !== RESERVED
 }
 
+async function addCategory() {
+  try {
+    const { value } = await ElMessageBox.prompt('输入分类名称', '新增分类', {
+      confirmButtonText: '创建',
+      cancelButtonText: '取消',
+      inputPlaceholder: '例如：24.新制度',
+      inputValidator: (v: string) => (v && v.trim() ? true : '分类名称不能为空'),
+    })
+    const name = value.trim()
+    const res = await api.addCategory(name, '')
+    if (!res.ok) {
+      ElMessage.error(res.message || '新增分类失败')
+      return
+    }
+    await store.loadCategories()
+    ElMessage.success('分类已创建')
+  } catch {
+    /* 用户取消 */
+  }
+}
+
 function toggle(id: string) {
   const next = new Set(expanded.value)
   if (next.has(id)) next.delete(id)
@@ -126,6 +150,15 @@ async function deleteCat(node: CategoryNode) {
 </script>
 
 <style scoped>
+.cat-add {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; height: 36px; margin-bottom: 12px;
+  border: 1px dashed var(--border-strong); border-radius: 9px;
+  background: transparent; color: var(--sub); font-size: 13px; cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.cat-add:hover { border-color: var(--primary); color: var(--primary-dark); background: var(--primary-soft); }
+.cat-add .el-icon { font-size: 15px; }
 .cat-list { max-height: calc(100vh - 250px); min-height: 320px; overflow-y: auto; overflow-x: hidden; }
 .cat-list::-webkit-scrollbar { width: 6px; }
 .cat-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
