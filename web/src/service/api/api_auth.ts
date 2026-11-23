@@ -25,6 +25,10 @@ export const authApi = {
     return request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
   },
 
+  switchUser(userId: UserId) {
+    return request<LoginResult>('/api/auth/switch-user', post({ userId }))
+  },
+
   listUsers() {
     return request<UserInfoRow[]>('/api/users')
   },

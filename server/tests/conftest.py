@@ -16,6 +16,10 @@ sys.path.insert(0, str(SERVER_DIR))
 os.environ.setdefault("DB_BACKEND", "sqlite")
 os.environ.setdefault("AUTH_MODE", "local")
 os.environ.setdefault("APP_PORT", "5281")
+# 测试必须跑在独立库上：conftest 会改写 admin 密码、创建临时账号，
+# 若复用 data/knowledge.db 会污染用户真实数据（历史上已发生多次）。
+TEST_DB = Path(__file__).resolve().parent / ".test_knowledge.db"
+os.environ["DB_URL"] = f"sqlite:///{TEST_DB}"
 
 TEST_PASSWORD = "TestPass123!"
 

@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
-"""本地账号鉴权接口：登录、当前用户、改密、登出。"""
+"""本地账号鉴权接口：登录、当前用户、改密、登出、管理员切换账号。"""
 from __future__ import annotations
 
 import bcrypt
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from ..config import settings
 from ..db import SessionLocal, User, now_str
-from ..errors import BadRequestError, UnauthorizedError
-from .common import create_token, get_current_user, user_to_dict
+from ..errors import BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError
+from .common import create_token, get_current_user, require_admin, user_to_dict
 
 router = APIRouter(prefix="/api/auth", tags=["本地账号鉴权"])
 
@@ -23,6 +24,10 @@ class LoginBody(BaseModel):
 class ChangePasswordBody(BaseModel):
     oldPassword: str = ""
     newPassword: str = ""
+
+
+class SwitchUserBody(BaseModel):
+    userId: str = ""
 
 
 def hash_password(password: str) -> str:
@@ -88,6 +93,30 @@ def change_password(body: ChangePasswordBody, user: dict = Depends(get_current_u
         row.must_change_password = False
         session.commit()
     return {"ok": True}
+
+
+@router.post("/switch-user")
+def switch_user(body: SwitchUserBody, admin: dict = Depends(require_admin)):
+    """管理员免密切换到目标账号（仅 local 模式），签发与 login 相同格式的 JWT。
+
+    仅用于测试不同角色：不校验目标用户的 must_change_password，
+    但 user 契约里保留真实标志，由前端按既有规则决定跳转改密页。
+    """
+    if settings.is_sso:
+        raise ForbiddenError("SSO 模式不支持切换账号")
+    target_id = body.userId.strip()
+    with SessionLocal() as session:
+        user = session.get(User, target_id)
+        if user is None or not user.enabled:
+            raise NotFoundError("目标用户不存在或已停用")
+        payload = {
+            "sub": user.id,
+            "username": user.username,
+            "role": user.role,
+        }
+        token = create_token(payload)
+        current = user_to_dict(user)
+    return {"token": token, "user": current}
 
 
 @router.post("/logout")

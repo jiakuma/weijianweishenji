@@ -50,7 +50,25 @@
             </el-button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="password">修改密码</el-dropdown-item>
+                <template v-if="auth.isAdmin">
+                  <div class="switch-user-head">切换账号</div>
+                  <el-dropdown-item
+                    v-for="u in switchableUsers"
+                    :key="u.id"
+                    :command="`switch:${u.id}`"
+                    :disabled="u.id === auth.currentUser?.id"
+                  >
+                    <span class="switch-user-row">
+                      <span>{{ u.displayName }}</span>
+                      <el-tag size="small" :type="u.role === 'admin' ? 'warning' : 'info'">
+                        {{ u.role === 'admin' ? '管理员' : '普通用户' }}
+                      </el-tag>
+                      <span v-if="u.id === auth.currentUser?.id" class="switch-user-current">当前</span>
+                    </span>
+                  </el-dropdown-item>
+                  <el-dropdown-item command="password" divided>修改密码</el-dropdown-item>
+                </template>
+                <el-dropdown-item v-if="!auth.isAdmin" command="password">修改密码</el-dropdown-item>
                 <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -146,7 +164,7 @@ import { useKnowledgeStore } from '@/stores/knowledge'
 import { useAuthStore } from '@/stores/auth'
 import { api } from '@/api'
 import { fallbackModules, moduleIcons } from '@/modules'
-import type { AuditModule } from '@/types'
+import type { AuditModule, UserInfoRow } from '@/types'
 
 interface NavItem {
   key: string
@@ -163,6 +181,7 @@ const store = useKnowledgeStore()
 const auth = useAuthStore()
 const mobileNav = ref(false)
 const modules = ref<AuditModule[]>(fallbackModules)
+const switchableUsers = ref<UserInfoRow[]>([])
 
 const CHAT_PATHS = ['/assistant', '/conflict', '/contract', '/workpaper']
 const isQa = computed(() => CHAT_PATHS.some((p) => route.path.startsWith(p)))
@@ -209,6 +228,10 @@ const navGroups = computed(() => {
 })
 
 async function onUserCommand(command: string): Promise<void> {
+  if (command.startsWith('switch:')) {
+    await switchAccount(command.slice('switch:'.length))
+    return
+  }
   if (command === 'password') {
     await router.push('/change-password')
     return
@@ -216,6 +239,25 @@ async function onUserCommand(command: string): Promise<void> {
   if (command === 'logout') {
     await auth.logout()
     await router.replace('/login')
+  }
+}
+
+/** 切到另一个账号后，旧的会话高亮键必须清掉，否则重新加载时会误恢复上一人的会话。 */
+function clearLastSessionKeys(): void {
+  for (const m of ['assistant', 'conflict', 'contract', 'workpaper']) {
+    try { localStorage.removeItem(`audit-last-session-${m}`) } catch { /* 隐私模式下忽略 */ }
+  }
+}
+
+async function switchAccount(userId: string): Promise<void> {
+  try {
+    await auth.switchUser(userId)
+    clearLastSessionKeys()
+    ElMessage.success('已切换账号')
+    // 整体重载并固定落到助手页：新身份的权限与会话列表都由服务端重新拉取。
+    window.location.href = '/assistant'
+  } catch (error) {
+    ElMessage.error(`切换账号失败：${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -258,6 +300,13 @@ function onMobileNav(item: NavItem) {
 
 onMounted(async () => {
   await auth.fetchMe()
+  if (auth.isAdmin) {
+    try {
+      switchableUsers.value = (await api.listUsers()).filter((u) => u.enabled)
+    } catch {
+      switchableUsers.value = []
+    }
+  }
   await store.loadAll()
   if (!store.backendReady) {
     ElMessage.error('后端未连接，请在 server 目录运行 python run.py（端口 5281）')
@@ -283,4 +332,7 @@ onUnmounted(() => store.stopPolling())
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .topbar-user { font-size: 13px; color: var(--sub); white-space: nowrap; }
 .topbar-user-btn { color: var(--sub); }
+.switch-user-head { padding: 6px 12px 4px; font-size: 12px; color: var(--sub); }
+.switch-user-row { display: flex; align-items: center; gap: 8px; }
+.switch-user-current { margin-left: auto; font-size: 12px; color: var(--sub); }
 </style>

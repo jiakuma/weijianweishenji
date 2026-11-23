@@ -21,7 +21,7 @@ const router = createRouter({
         { path: 'library', name: 'library', component: () => import('@/views/LibraryView.vue'), meta: { title: '资料库' } },
         { path: 'issues', name: 'issues', component: () => import('@/views/IssueLibraryView.vue'), meta: { title: '历史问题库' } },
         { path: 'document/:id', name: 'document', component: () => import('@/views/DocumentView.vue'), meta: { title: '资料详情' } },
-        { path: 'import', name: 'import', component: () => import('@/views/ImportView.vue'), meta: { title: '文件导入' } },
+        { path: 'import', name: 'import', component: () => import('@/views/ImportView.vue'), meta: { title: '文件导入', requiresAdmin: true } },
         { path: 'settings', name: 'settings', component: () => import('@/views/SettingsView.vue'), meta: { title: '系统设置' } },
         { path: 'users', name: 'users', component: () => import('@/views/UserManageView.vue'), meta: { title: '用户管理', requiresAdmin: true } },
       ],
@@ -30,14 +30,17 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const token = getAccessToken()
   const auth = useAuthStore()
   if (!token && to.path !== '/login') return { path: '/login', replace: true }
   if (token && to.path === '/login') return { path: '/assistant', replace: true }
-  // store 尚未加载时不拦截，由后端 403 兜底跳修改密码。
+  // 首屏或直接粘贴 URL 进入受保护页面时，currentUser 尚未异步加载。
+  // 先拉一次身份再判断权限，否则管理员守卫会因 currentUser 为空而被跳过。
+  if (token && !auth.currentUser) await auth.fetchMe()
   if (auth.mustChangePassword && to.path !== '/change-password') return { path: '/change-password', replace: true }
-  if (to.meta.requiresAdmin && auth.currentUser && !auth.isAdmin) return { path: '/assistant', replace: true }
+  // 身份未加载/加载失败一律不放行管理员页面，后端 403 只是最后兜底。
+  if (to.meta.requiresAdmin && !auth.isAdmin) return { path: '/assistant', replace: true }
   return true
 })
 

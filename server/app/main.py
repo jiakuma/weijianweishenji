@@ -80,6 +80,7 @@ from .auth.common import (
     filter_by_owner,
     get_current_user,
     owner_id_for,
+    require_admin,
     reset_owner_id,
     user_to_dict,
     verify_token,
@@ -902,7 +903,7 @@ def list_tasks():
 
 
 @app.delete("/api/imports")
-def clear_tasks(scope: str = "finished"):
+def clear_tasks(scope: str = "finished", admin: dict = Depends(require_admin)):
     with SessionLocal() as s:
         query = s.query(ImportTaskRow)
         if scope == "finished":
@@ -921,6 +922,7 @@ async def upload_files(
     batch_id: str = Form(""),
     only_documents: str = Form("true"),
     categories: str = Form(""),
+    admin: dict = Depends(require_admin),
 ):
     try:
         paths = json.loads(relative_paths) if relative_paths else []
@@ -1057,7 +1059,7 @@ async def upload_assistant_files(
 
 
 @app.post("/api/imports/links")
-def import_link(body: LinkBody):
+def import_link(body: LinkBody, admin: dict = Depends(require_admin)):
     url = body.url.strip()
     task_id = uid("t")
     batch = uid("IMP_")
@@ -1103,7 +1105,7 @@ def import_link(body: LinkBody):
 
 
 @app.post("/api/imports/{task_id}/retry")
-def retry_task(task_id: str):
+def retry_task(task_id: str, admin: dict = Depends(require_admin)):
     with SessionLocal() as s:
         t = s.get(ImportTaskRow, task_id)
         if not t:
@@ -1116,7 +1118,7 @@ def retry_task(task_id: str):
 
 
 @app.post("/api/imports/{task_id}/reparse")
-def reparse_task(task_id: str):
+def reparse_task(task_id: str, admin: dict = Depends(require_admin)):
     with SessionLocal() as s:
         t = s.get(ImportTaskRow, task_id)
         if not t or not t.doc_id:

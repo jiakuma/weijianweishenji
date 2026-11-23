@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { api, getAccessToken, setAccessToken } from '@/api'
 import { useKnowledgeStore } from '@/stores/knowledge'
-import type { AuthUser, LoginResult } from '@/types'
+import type { AuthUser, LoginResult, UserId } from '@/types'
 
 export const useAuthStore = defineStore('auth', () => {
   const currentUser = ref<AuthUser | null>(null)
@@ -40,6 +40,15 @@ export const useAuthStore = defineStore('auth', () => {
     return result
   }
 
+  /** 管理员切换到目标账号：换 token、换身份，并丢弃上一个账号的问答会话状态。 */
+  async function switchUser(userId: UserId): Promise<LoginResult> {
+    const result = await api.switchUser(userId)
+    setAccessToken(result.token)
+    currentUser.value = result.user
+    useKnowledgeStore().clearQaState()
+    return result
+  }
+
   async function logout(): Promise<void> {
     try {
       await api.logout()
@@ -58,6 +67,6 @@ export const useAuthStore = defineStore('auth', () => {
 
   return {
     currentUser, isAdmin, mustChangePassword,
-    fetchMe, login, logout, clearUser, markPasswordChanged,
+    fetchMe, login, switchUser, logout, clearUser, markPasswordChanged,
   }
 })

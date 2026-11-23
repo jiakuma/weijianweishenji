@@ -283,3 +283,98 @@ def test_report_tasks_owner_isolation(client, admin_headers, normal_user):
 
     own = client.get("/api/modules/contract/tasks", headers=admin_headers).json()
     assert any(row["id"] == task_id for row in own)
+
+
+# ---------------------------------------------------------------- 导入权限与切换账号
+
+def test_import_endpoints_require_admin(client, normal_user, admin_headers):
+    """资料库导入/改写接口仅管理员可用；只读任务列表对所有登录用户开放。"""
+    headers = normal_user["headers"]
+    assert client.get("/api/imports", headers=headers).status_code == 200
+    assert client.post(
+        "/api/imports/files",
+        files=[("files", ("权限测试.txt", b"hello", "text/plain"))],
+        headers=headers,
+    ).status_code == 403
+    assert client.post(
+        "/api/imports/links",
+        json={"url": "https://example.com/nope"},
+        headers=headers,
+    ).status_code == 403
+    assert client.post("/api/imports/not-exist/retry", headers=headers).status_code == 403
+    assert client.post("/api/imports/not-exist/reparse", headers=headers).status_code == 403
+    assert client.delete("/api/imports", headers=headers).status_code == 403
+
+    # 管理员调用同一个空操作接口不受影响
+    assert client.post(
+        "/api/imports/not-exist/retry", headers=admin_headers
+    ).json() == {"ok": False}
+    assert client.delete("/api/imports", headers=admin_headers).status_code == 200
+
+
+def test_switch_user_requires_admin(client, normal_user):
+    response = client.post(
+        "/api/auth/switch-user",
+        json={"userId": normal_user["id"]},
+        headers=normal_user["headers"],
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_switch_user_success_and_target_contract(client, normal_user, admin_headers):
+    response = client.post(
+        "/api/auth/switch-user",
+        json={"userId": normal_user["id"]},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["token"]
+    assert body["user"]["id"] == normal_user["id"]
+    assert body["user"]["role"] == "user"
+    assert set(body["user"]) >= {
+        "id", "username", "displayName", "role", "mustChangePassword"
+    }
+    assert "passwordHash" not in body["user"]
+    me = client.get("/api/auth/me", headers={"X-Access-Token": body["token"]})
+    assert me.status_code == 200
+    assert me.json()["id"] == normal_user["id"]
+
+
+def test_switch_user_rejects_unknown_and_disabled(client, admin_headers):
+    assert client.post(
+        "/api/auth/switch-user", json={"userId": "nonexistent-user"},
+        headers=admin_headers,
+    ).status_code == 404
+
+    from app.auth.routes import hash_password
+    from app.db import SessionLocal, User, now_str
+
+    username = f"sw-disabled-{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as session:
+        session.add(User(
+            id=f"user-{uuid.uuid4().hex[:12]}", username=username,
+            display_name="停用切换目标", password_hash=hash_password(TEST_PASSWORD),
+            role="user", enabled=False, must_change_password=False,
+            created_at=now_str(),
+        ))
+        session.commit()
+    with SessionLocal() as session:
+        disabled_id = session.query(User).filter(User.username == username).first().id
+    assert client.post(
+        "/api/auth/switch-user", json={"userId": disabled_id},
+        headers=admin_headers,
+    ).status_code == 404
+
+
+def test_switch_user_disabled_in_sso(client, admin_headers, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "AUTH_MODE", "sso")
+    assert settings.is_sso is True
+    response = client.post(
+        "/api/auth/switch-user", json={"userId": "anything"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 403

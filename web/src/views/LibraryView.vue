@@ -39,7 +39,7 @@
             <el-button @click="store.mapOpen = true">
               <el-icon style="margin-right: 5px"><Share /></el-icon>知识地图
             </el-button>
-            <el-button type="primary" @click="goImport">
+            <el-button v-if="auth.isAdmin" type="primary" @click="goImport">
               <el-icon style="margin-right: 5px"><Upload /></el-icon>导入资料
             </el-button>
           </div>
@@ -179,10 +179,12 @@ import { Grid, List, MoreFilled, Search, Share, Star, StarFilled, Upload } from 
 import { api, fileUrl } from '@/api'
 import CategoryTree from '@/components/CategoryTree.vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
+import { useAuthStore } from '@/stores/auth'
 import { FORMAT_TONE } from '@/types'
 import type { CategoryNode, KnowledgeDoc } from '@/types'
 
 const store = useKnowledgeStore()
+const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 const page = ref(1)
