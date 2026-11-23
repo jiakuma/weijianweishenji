@@ -115,7 +115,10 @@ async def get_current_user(request: Request) -> dict[str, Any]:
     from ..errors import UnauthorizedError
 
     state = request.scope.get("state") or {}
-    token = request.headers.get("X-Access-Token") or request.cookies.get("uinfo", "")
+    # 浏览器直连资源无法注入请求头，兼容 fileUrl() 附带的 token 查询参数。
+    token = (request.headers.get("X-Access-Token")
+             or request.cookies.get("uinfo", "")
+             or request.query_params.get("token", ""))
     payload = verify_token(token) if token else None
     if not payload and state.get("uinfo"):
         payload = state["uinfo"]

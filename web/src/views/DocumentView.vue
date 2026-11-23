@@ -183,7 +183,11 @@ async function load() {
     tags.value = [...(d.tags || [])]
     if (previewKind.value === 'text' && !isOffice.value) {
       try {
-        rawText.value = await (await fetch(originalUrl.value)).text()
+        const resp = await fetch(originalUrl.value)
+        const text = await resp.text()
+        // 鉴权失败等情况下接口返回的是错误 JSON，不能当正文渲染
+        const looksLikeError = /^\s*\{\s*"error"/.test(text)
+        rawText.value = resp.ok && !looksLikeError ? text : ''
       } catch {
         rawText.value = ''
       }

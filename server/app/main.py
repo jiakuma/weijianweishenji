@@ -349,7 +349,11 @@ async def local_access_guard(request: Request, call_next):
     if path in LOCAL_AUTH_EXEMPT:
         return await call_next(request)
 
-    token = request.headers.get("X-Access-Token") or request.cookies.get("uinfo", "")
+    # 浏览器直连资源（iframe 预览 / img / a 下载）无法注入自定义请求头，
+    # 统一改由 fileUrl() 在 URL 上附 token 查询参数；这里作为 header/cookie 的补充。
+    token = (request.headers.get("X-Access-Token")
+             or request.cookies.get("uinfo", "")
+             or request.query_params.get("token", ""))
     payload = verify_token(token)
     subject = str(payload.get("sub") or "") if payload else ""
     impersonated = bool(payload.get("impersonated")) if payload else False

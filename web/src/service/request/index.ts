@@ -20,7 +20,13 @@ export function setAccessToken(token: string): void {
 }
 
 export function fileUrl(path: string): string {
-  return `${BASE}${path}`
+  const url = `${BASE}${path}`
+  // iframe / img / a[download] 由浏览器直连，无法注入 X-Access-Token 请求头，
+  // 统一在 URL 上附带 token，后端鉴权中间件/依赖已兼容 query token。
+  const token = getAccessToken()
+  if (!token) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${encodeURIComponent(token)}`
 }
 
 export function failMessage(status: number, path: string): string {
