@@ -1,20 +1,17 @@
 <template>
-  <div class="qa-shell">
+  <div class="qa-shell" :class="{ 'is-empty': !messages.length }">
     <div ref="listEl" class="qa-list">
+      <div v-if="!messages.length" class="welcome">
+        <span class="welcome-icon"><el-icon><component :is="cfg.icon" /></el-icon></span>
+        <h1 class="welcome-title">你好，我能帮你什么吗？</h1>
+      </div>
+
       <div v-for="(m, i) in messages" :key="i" class="qa-msg" :class="m.role">
         <div v-if="m.role === 'user'" class="bubble user">
           <div>{{ displayQuestion(m.text) }}</div>
           <div v-if="m.files?.length" class="user-files">
             <span v-for="(f, fi) in m.files" :key="fi" class="user-file-chip">{{ f }}</span>
           </div>
-        </div>
-
-        <div v-else-if="m.greeting" class="bubble bot greeting">
-          <div class="greeting-head">
-            <span class="greeting-icon"><el-icon><component :is="cfg.icon" /></el-icon></span>
-            <span>{{ cfg.title }}</span>
-          </div>
-          <div class="greeting-text">{{ m.greeting }}</div>
         </div>
 
         <div v-else-if="m.loading" class="bubble bot loading">
@@ -250,18 +247,18 @@ const moduleKey = computed(() => {
   const m = String(route.meta.module || '')
   return ['assistant', 'conflict', 'contract', 'workpaper'].includes(m) ? m : 'assistant'
 })
-const moduleConfig: Record<string, { title: string; icon: typeof ChatDotRound; greeting: string }> = {
-  assistant: { title: '审计工作助手', icon: ChatDotRound, greeting: '你好，我是审计工作助手。请上传资料或提出问题，我会结合已导入的资料与历史审计问题为你核对解答。' },
-  conflict: { title: '制度互斥检测', icon: Connection, greeting: '你好，我是制度互斥检测助手。请上传多份制度文件，我会识别条款之间的冲突与互斥，并出具核对报告。' },
-  contract: { title: '合同审计', icon: Tickets, greeting: '你好，我是合同审计助手。请上传合同及附件，我会核查关键字段、条款合规性与跨文件勾稽关系，并出具审计报告。' },
-  workpaper: { title: '底稿审核', icon: Document, greeting: '你好，我是底稿审核助手。请上传实施方案与审计底稿，我会逐项核对底稿是否覆盖要求，并出具审核结论。' },
+const moduleConfig: Record<string, { title: string; icon: typeof ChatDotRound }> = {
+  assistant: { title: '审计工作助手', icon: ChatDotRound },
+  conflict: { title: '制度互斥检测', icon: Connection },
+  contract: { title: '合同审计', icon: Tickets },
+  workpaper: { title: '底稿审核', icon: Document },
 }
 const cfg = computed(() => moduleConfig[moduleKey.value])
 
 type AssistantMsg = { role: 'assistant'; loading?: boolean; streaming?: boolean; answerText?: string;
                       error?: string; result?: QAResult; confirm?: AgentConfirm;
                       progress?: AgentProgress[]; conflictStage?: string; conflict?: ConflictDetail;
-                      contractStage?: string; contract?: ContractDetail; greeting?: string
+                      contractStage?: string; contract?: ContractDetail
                       workpaperStage?: string; workpaper?: WorkpaperDetail }
 type Msg = { role: 'user'; text: string; files?: string[] } | AssistantMsg
 
@@ -324,13 +321,10 @@ async function loadSessions() {
 }
 
 function rowsToMessages(rows: import('@/types').QAResult[]): Msg[] {
-  const list = rows.flatMap((r): Msg[] => [
+  return rows.flatMap((r): Msg[] => [
     { role: 'user', text: r.question, files: r.files },
     { role: 'assistant', result: r, conflict: r.conflict, contract: r.contract, workpaper: r.workpaper, streaming: r.status === 'running' },
   ])
-  // 空会话也展示一条问候，让页面始终是"对话"形态（问候语不落库，仅前端注入）
-  if (!list.length) list.push({ role: 'assistant', greeting: cfg.value.greeting })
-  return list
 }
 
 function lastSessionKey(): string {
@@ -348,7 +342,7 @@ async function switchSession(id: string) {
   try {
     messages.value = rowsToMessages(await api.getSession(id))
   } catch {
-    messages.value = [{ role: 'assistant', greeting: cfg.value.greeting }]
+    messages.value = []
   }
   scrollToEnd()
 }
@@ -362,7 +356,7 @@ async function newSession() {
   sessionId.value = id
   store.qaSessionId = id
   rememberSession(id)
-  messages.value = [{ role: 'assistant', greeting: cfg.value.greeting }]
+  messages.value = []
 }
 
 // 每次进入本模块都恢复到「最后一次对话的会话」：
@@ -819,11 +813,20 @@ onUnmounted(() => {
 .bubble.bot { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .bubble.error { color: #d35b52; border-color: #f3c9c6; }
 
-.bubble.greeting { padding: 16px 18px; }
-.greeting-head { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 650; color: var(--text); }
-.greeting-icon { width: 28px; height: 28px; border-radius: 8px; flex: 0 0 28px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--primary), var(--accent)); }
-.greeting-icon .el-icon { font-size: 16px; }
-.greeting-text { margin-top: 9px; font-size: 13.5px; line-height: 1.75; color: var(--sub); }
+/* 空状态：欢迎语与输入框一起垂直居中（DeepSeek 风格） */
+.qa-shell.is-empty { justify-content: center; }
+.qa-shell.is-empty .qa-list { flex: 0 0 auto; overflow: visible; padding: 0; }
+.qa-shell.is-empty .qa-composer { width: 100%; max-width: 660px; margin: 0 auto; padding-top: 26px; }
+
+.welcome { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px 0; }
+.welcome-icon {
+  width: 36px; height: 36px; flex: 0 0 36px; border-radius: 10px;
+  display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  box-shadow: 0 5px 14px rgba(74, 91, 214, .24);
+}
+.welcome-icon .el-icon { font-size: 20px; }
+.welcome-title { margin: 0; font-size: 26px; font-weight: 700; color: var(--text); letter-spacing: .3px; }
 
 .bubble.loading, .bubble-inline-loading { color: var(--muted); display: inline-flex; align-items: center; gap: 5px; font-size: 13px; }
 .bubble-inline-loading { margin-bottom: 4px; }
