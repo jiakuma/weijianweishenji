@@ -1,13 +1,5 @@
 <template>
   <div class="category-pane">
-    <div class="pane-head">
-      <span>知识分类</span>
-    </div>
-
-    <el-input v-model="filter" class="cat-filter" placeholder="筛选分类" clearable size="small">
-      <template #prefix><el-icon><Search /></el-icon></template>
-    </el-input>
-
     <div class="cat-list">
     <div class="cat-row" :class="{ 'is-active': !store.currentCategory }" @click="store.selectCategory('')">
       <span class="cat-caret" />
@@ -53,7 +45,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, ArrowRight, Delete, Folder, FolderOpened, Search } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, Delete, Folder, FolderOpened } from '@element-plus/icons-vue'
 import { api } from '@/api'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import type { CategoryNode } from '@/types'
@@ -62,11 +54,9 @@ const RESERVED = '未分类'
 
 const store = useKnowledgeStore()
 const expanded = ref<Set<string>>(new Set())
-const filter = ref('')
 
 const flat = computed(() => {
   const out: Array<{ node: CategoryNode; depth: number }> = []
-  const kw = filter.value.trim().toLowerCase()
   const pushDirect = (node: CategoryNode, depth: number) => {
     if ((node.directCount ?? 0) > 0) {
       out.push({
@@ -85,12 +75,6 @@ const flat = computed(() => {
   }
   const walk = (nodes: CategoryNode[], depth: number) => {
     for (const node of nodes) {
-      if (kw) {
-        // 筛选态：只显示名称命中的节点，不展开子树，保持列表紧凑。
-        if (node.name.toLowerCase().includes(kw)) out.push({ node, depth })
-        walk(node.children, depth + 1)
-        continue
-      }
       out.push({ node, depth })
       if (node.children.length && expanded.value.has(node.id)) {
         walk(node.children, depth + 1)
@@ -142,7 +126,6 @@ async function deleteCat(node: CategoryNode) {
 </script>
 
 <style scoped>
-.cat-filter { margin-bottom: 8px; }
 .cat-list { max-height: calc(100vh - 250px); min-height: 320px; overflow-y: auto; overflow-x: hidden; }
 .cat-list::-webkit-scrollbar { width: 6px; }
 .cat-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }

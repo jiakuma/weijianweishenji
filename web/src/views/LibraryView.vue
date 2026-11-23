@@ -7,42 +7,12 @@
       <CategoryTree />
       <div class="library-pane">
         <div class="pane-toolbar">
-          <span class="pane-count">{{ store.currentCategory || '全部资料' }}{{ store.directOnly ? ' · 本级文件' : '' }} · 共 {{ store.docs.length }} 篇</span>
-          <div class="pane-actions">
-            <el-input
-              v-model="searchText"
-              class="library-search"
-              placeholder="搜索标题、摘要、标签"
-              clearable
-              @keyup.enter="doSearch"
-              @clear="doSearch"
-            >
-              <template #prefix><el-icon><Search /></el-icon></template>
-            </el-input>
-            <el-checkbox v-model="starredOnly" @change="onStarred">只看收藏</el-checkbox>
-            <el-select :model-value="store.sort" style="width: 118px" @change="onSort">
-              <el-option label="按导入时间" value="time" />
-              <el-option label="按名称" value="name" />
-            </el-select>
-            <el-button-group>
-              <el-tooltip content="列表视图" placement="top">
-                <el-button :type="store.viewMode === 'list' ? 'primary' : undefined" @click="store.setViewMode('list')">
-                  <el-icon><List /></el-icon>
-                </el-button>
-              </el-tooltip>
-              <el-tooltip content="卡片视图" placement="top">
-                <el-button :type="store.viewMode === 'card' ? 'primary' : undefined" @click="store.setViewMode('card')">
-                  <el-icon><Grid /></el-icon>
-                </el-button>
-              </el-tooltip>
-            </el-button-group>
-            <el-button @click="store.mapOpen = true">
-              <el-icon style="margin-right: 5px"><Share /></el-icon>知识地图
-            </el-button>
-            <el-button v-if="auth.isAdmin" type="primary" @click="goImport">
-              <el-icon style="margin-right: 5px"><Upload /></el-icon>导入资料
-            </el-button>
-          </div>
+          <el-button @click="store.mapOpen = true">
+            <el-icon style="margin-right: 5px"><Share /></el-icon>知识地图
+          </el-button>
+          <el-button v-if="auth.isAdmin" type="primary" @click="goImport">
+            <el-icon style="margin-right: 5px"><Upload /></el-icon>导入资料
+          </el-button>
         </div>
 
         <div v-loading="store.loading">
@@ -175,7 +145,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Grid, List, MoreFilled, Search, Share, Star, StarFilled, Upload } from '@element-plus/icons-vue'
+import { MoreFilled, Share, Star, StarFilled, Upload } from '@element-plus/icons-vue'
 import { api, fileUrl } from '@/api'
 import CategoryTree from '@/components/CategoryTree.vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
@@ -188,8 +158,6 @@ const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 const page = ref(1)
-const starredOnly = ref(false)
-const searchText = ref(store.keyword)
 const editDialog = ref(false)
 const editTags = ref<string[]>([])
 const categoryDialog = ref(false)
@@ -230,19 +198,6 @@ function open(doc: KnowledgeDoc) {
 
 function goImport() {
   void router.push('/import')
-}
-
-function doSearch() {
-  store.setKeyword(searchText.value.trim())
-}
-
-function onSort(value: string) {
-  store.setSort(value as 'time' | 'name')
-}
-
-function onStarred(value: unknown) {
-  store.starredOnly = Boolean(value)
-  void store.loadDocs()
 }
 
 function onCommand(cmd: string, doc: KnowledgeDoc) {
