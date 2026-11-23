@@ -5,15 +5,6 @@
         <div class="welcome">
           <div class="welcome-icon"><el-icon><component :is="cfg.icon" /></el-icon></div>
           <h1 class="welcome-title">{{ cfg.title }}</h1>
-          <p class="welcome-desc">{{ cfg.desc }}</p>
-          <div class="welcome-divider"><span>试着这样问</span></div>
-          <div class="qa-suggests">
-            <button v-for="q in cfg.suggests" :key="q" class="qa-suggest" @click="useSuggest(q)">
-              <el-icon class="suggest-spark"><ChatDotRound /></el-icon>
-              <span>{{ q }}</span>
-              <el-icon class="suggest-arrow"><ArrowRight /></el-icon>
-            </button>
-          </div>
         </div>
       </div>
 
@@ -258,38 +249,11 @@ const moduleKey = computed(() => {
   const m = String(route.meta.module || '')
   return ['assistant', 'conflict', 'contract', 'workpaper'].includes(m) ? m : 'assistant'
 })
-const moduleConfig: Record<string, {
-  title: string; desc: string; icon: typeof ChatDotRound;
-  suggests: string[]; defaultQ: string
-}> = {
-  assistant: {
-    title: '审计工作助手',
-    desc: '基于已导入的资料与历史审计问题，随时提问、核对依据，答案附带可追溯的引用。',
-    icon: ChatDotRound,
-    suggests: ['总结最近导入的资料要点', '对比各文档里的方案差异', '找出与某某主题相关的关键结论'],
-    defaultQ: '请分析这些文件',
-  },
-  conflict: {
-    title: '制度互斥检测',
-    desc: '上传多份制度文件，自动识别条款之间的冲突与互斥，输出可核对的差异报告。',
-    icon: Connection,
-    suggests: ['检查上传制度之间有没有互斥', '这两份制度对同一事项的规定是否打架'],
-    defaultQ: '请对这些文件做制度互斥检测',
-  },
-  contract: {
-    title: '合同审计',
-    desc: '上传合同及相关附件，自动核查关键字段、条款合规性与跨文件勾稽关系。',
-    icon: Tickets,
-    suggests: ['帮我看看合同有没有什么问题', '核对合同与附件的关键字段是否一致'],
-    defaultQ: '请帮我审计这些合同文件',
-  },
-  workpaper: {
-    title: '底稿审核',
-    desc: '对照实施方案的审计要点，逐项核对工作底稿是否覆盖、形成明确的审核结论。',
-    icon: Document,
-    suggests: ['帮我复核这些审计工作底稿', '检查底稿是否覆盖实施方案要求的事项'],
-    defaultQ: '请帮我审核这些底稿',
-  },
+const moduleConfig: Record<string, { title: string; icon: typeof ChatDotRound }> = {
+  assistant: { title: '审计工作助手', icon: ChatDotRound },
+  conflict: { title: '制度互斥检测', icon: Connection },
+  contract: { title: '合同审计', icon: Tickets },
+  workpaper: { title: '底稿审核', icon: Document },
 }
 const cfg = computed(() => moduleConfig[moduleKey.value])
 
@@ -418,11 +382,6 @@ async function recoverSession() {
   } else {
     await newSession()
   }
-}
-
-function useSuggest(q: string) {
-  input.value = q
-  void send()
 }
 
 async function send() {
@@ -855,22 +814,7 @@ onUnmounted(() => {
   box-shadow: 0 10px 26px rgba(74, 91, 214, .28);
 }
 .welcome-icon .el-icon { font-size: 30px; }
-.welcome-title { font-size: 24px; font-weight: 700; letter-spacing: .3px; margin: 0 0 10px; color: var(--text); }
-.welcome-desc { font-size: 14px; line-height: 1.8; color: var(--sub); margin: 0 auto; max-width: 460px; }
-.welcome-divider { display: flex; align-items: center; gap: 14px; margin: 30px 0 16px; color: var(--muted); font-size: 12px; }
-.welcome-divider::before, .welcome-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-.qa-suggests { display: flex; flex-direction: column; gap: 9px; }
-.qa-suggest {
-  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
-  font-size: 13.5px; color: var(--text); background: var(--surface);
-  border: 1px solid var(--border); border-radius: 12px; padding: 13px 16px; cursor: pointer;
-  transition: border-color .15s, box-shadow .15s, transform .12s;
-}
-.qa-suggest:hover { border-color: var(--primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
-.qa-suggest > span { flex: 1; }
-.suggest-spark { color: var(--primary); font-size: 16px; }
-.suggest-arrow { color: var(--muted); font-size: 13px; transition: transform .15s, color .15s; }
-.qa-suggest:hover .suggest-arrow { transform: translateX(3px); color: var(--primary); }
+.welcome-title { font-size: 24px; font-weight: 700; letter-spacing: .3px; margin: 0; color: var(--text); }
 .qa-msg { display: flex; }
 .qa-msg.user { justify-content: flex-end; }
 .qa-msg.assistant { justify-content: flex-start; }
