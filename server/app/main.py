@@ -482,7 +482,7 @@ def get_doc(doc_id: str):
         data["hasFulltext"] = bool(s.get(DocumentFulltext, doc_id))
         data["hasOriginal"] = bool(s.query(DocumentFile).filter(
             DocumentFile.doc_id == doc_id, DocumentFile.kind == "original").first())
-        data["officePreview"] = bool(_find_soffice())
+        data["officePreview"] = parsers.office_preview_available()
         return data
 
 
@@ -553,22 +553,34 @@ def _find_soffice() -> str | None:
 
 
 def _doc_to_pdf(src: Path) -> Path | None:
+    """把 Office 文档转成 PDF 供内联预览：优先本机 Word（保真度最高），其次 LibreOffice。"""
+    cache = DATA_DIR / "pdf_preview"
+    cache.mkdir(parents=True, exist_ok=True)
+    # 用源文件 id+后缀做缓存键，避免不同目录同名文件互相覆盖
+    target = cache / f"{src.parent.name}_{src.stem}.pdf"
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    suffix = src.suffix.lower()
+    # 优先用本机 Word COM 转换（doc/docx/ppt 统一走它，保留原始排版）
+    if suffix in (".docx", ".doc", ".pptx", ".ppt") and parsers.office_preview_available():
+        if parsers.doc_to_pdf(src, target):
+            return target
+    # 兜底：LibreOffice
     soffice = _find_soffice()
     if not soffice:
         return None
-    cache = DATA_DIR / "pdf_preview"
-    cache.mkdir(parents=True, exist_ok=True)
-    target = cache / f"{src.stem}.pdf"
-    if target.exists():
-        return target
     try:
         subprocess.run(
             [soffice, "--headless", "--convert-to", "pdf", "--outdir", str(cache), str(src)],
             check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
+        # LibreOffice 按源文件名输出到 cache，可能与目标名不同，找一下
+        produced = cache / f"{src.stem}.pdf"
+        if produced.exists() and produced != target:
+            produced.replace(target)
     except Exception:
         return None
-    return target if target.exists() else None
+    return target if target.exists() and target.stat().st_size > 0 else None
 
 
 @app.post("/api/docs/{doc_id}/star")

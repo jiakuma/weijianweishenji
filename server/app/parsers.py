@@ -112,7 +112,7 @@ class _WordConverter:
                 item = self._q.get()
                 if item is None:
                     break
-                src, out, ev, err = item
+                src, out, ev, err, file_format = item
                 try:
                     if word is None:
                         word = win32com.client.Dispatch("Word.Application")
@@ -126,7 +126,7 @@ class _WordConverter:
                             pass
                     doc = word.Documents.Open(str(src))
                     try:
-                        doc.SaveAs2(str(out), FileFormat=16)  # 16 = wdFormatXMLDocument
+                        doc.SaveAs2(str(out), FileFormat=file_format)  # 16=docx, 17=pdf
                     finally:
                         doc.Close(False)  # 不保存改动
                 except Exception as e:  # noqa: BLE001
@@ -151,12 +151,14 @@ class _WordConverter:
             except Exception:
                 pass
 
-    def convert(self, src: Path, out: Path, timeout: int = 180) -> None:
+    def convert(self, src: Path, out: Path, timeout: int = 180,
+                file_format: int = 16) -> None:
+        """用 Word COM 转换文件。file_format: 16=docx（默认，给 .doc 解析用），17=pdf（预览用）。"""
         if not self._available:
-            raise RuntimeError("未安装 pywin32，无法转换 .doc；请另存为 .docx 后导入")
+            raise RuntimeError("未安装 pywin32，无法调用 Word 转换")
         ev = threading.Event()
         err: list = []
-        self._q.put((src, out, ev, err))
+        self._q.put((src, out, ev, err, file_format))
         if not ev.wait(timeout):
             raise RuntimeError("Word 转换超时（可能文件过大或 Word 无响应）")
         if err:
@@ -164,6 +166,35 @@ class _WordConverter:
 
 
 _word_converter = _WordConverter()
+
+
+def doc_to_pdf(src: Path, out: Path) -> bool:
+    """用本机 Word 把 doc/docx 转成 PDF（保留原始排版），供内联预览。成功返回 True。
+
+    Word COM 跨边界传中文长路径易报“找不到文件”，先复制到短 ASCII 临时路径再转换。
+    """
+    # Word COM 冷启动/偶发断连会导致首次失败，转换器内部会回收坏实例；重试一次。
+    for attempt in range(2):
+        work = Path(tempfile.mkdtemp(prefix="kb_pdfprev_"))
+        try:
+            short_src = work / ("src" + src.suffix.lower())
+            shutil.copyfile(str(src), str(short_src))
+            short_out = work / "out.pdf"
+            _word_converter.convert(short_src, short_out, file_format=17)  # 17 = wdFormatPDF
+            if short_out.exists() and short_out.stat().st_size > 0:
+                shutil.copyfile(str(short_out), str(out))
+                return True
+        except Exception:  # noqa: BLE001  预览失败回退纯文本即可，不影响主流程
+            pass
+        finally:
+            shutil.rmtree(str(work), ignore_errors=True)
+    return False
+
+
+def office_preview_available() -> bool:
+    """是否有可用的 Office→PDF 预览能力：本机 Word（pywin32）或 LibreOffice。"""
+    return bool(_word_converter._available or shutil.which("soffice")
+                or shutil.which("libreoffice"))
 
 
 def _doc_legacy_pages(path: Path) -> list[tuple[int, str, str]]:
