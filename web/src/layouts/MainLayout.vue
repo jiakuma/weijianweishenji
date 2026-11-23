@@ -26,13 +26,6 @@
           </template>
         </template>
       </nav>
-
-      <div class="nav-foot">
-        <div>{{ store.storage ? `${t('common.localData')} ${store.storage.totalMb.toFixed(1)} MB` : t('common.localData') }}</div>
-        <div class="storage-bar">
-          <span :style="{ width: `${Math.min(100, ((store.storage?.totalMb ?? 0) / 200) * 100)}%` }" />
-        </div>
-      </div>
     </aside>
 
     <div class="workspace">

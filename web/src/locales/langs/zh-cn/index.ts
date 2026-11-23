@@ -21,7 +21,6 @@ export default {
     disabled: '未启用',
     sessionHistory: '会话记录',
     newSession: '新会话',
-    localData: '本地数据',
   },
   nav: {
     title: '导航',

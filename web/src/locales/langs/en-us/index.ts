@@ -21,7 +21,6 @@ export default {
     disabled: 'Disabled',
     sessionHistory: 'Sessions',
     newSession: 'New session',
-    localData: 'Local data',
   },
   nav: {
     title: 'Navigation',
