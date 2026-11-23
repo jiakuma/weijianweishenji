@@ -1,9 +1,5 @@
 <template>
   <div>
-    <div class="page-head">
-      <h2 class="page-title">历史问题库</h2>
-    </div>
-
     <div class="issue-toolbar">
       <el-select v-model="filters.year" class="issue-filter-year" placeholder="全部年度">
         <el-option label="全部年度" value="" />
@@ -14,12 +10,6 @@
       <el-input v-model="filters.q" class="issue-filter-q" placeholder="关键词：表现 / 问题 / 定性依据 / 整改" clearable @keyup.enter="doSearch" />
       <el-button type="primary" @click="doSearch">查询</el-button>
       <el-button @click="resetFilters">重置</el-button>
-      <span class="issue-stat">共 {{ displayTotal }} 条<span v-if="stats.dbTotal && displayTotal !== stats.dbTotal">（库内共 {{ stats.dbTotal }} 条）</span> · 当前第 {{ page }} / {{ pageCount }} 页</span>
-    </div>
-
-    <div class="issue-tip">
-      历史问题仅供检索参考，定性须由审计人员复核。
-      <span v-if="stats.dbTotal">年度分布：{{ yearDistribution }}</span>
     </div>
 
     <div v-loading="loading">
@@ -135,14 +125,6 @@ const yearOptions = computed<string[]>(() => {
   const years = Object.keys(stats.value.byYear || {}).filter((y) => y && y !== '0').sort().reverse()
   return years.length ? years : ['2025', '2024']
 })
-const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
-const displayTotal = computed(() => total.value)
-const yearDistribution = computed(() =>
-  Object.entries(stats.value.byYear || {})
-    .map(([year, count]) => `${year} 年 ${count} 条`)
-    .join(' · '),
-)
-
 function clip(text: string | undefined, length: number): string {
   const value = (text || '').replace(/\s+/g, ' ').trim()
   return value.length > length ? `${value.slice(0, length)}…` : value
@@ -231,9 +213,6 @@ watch(() => route.query.id, (value) => {
 .issue-filter-cat { width: 176px; }
 .issue-filter-subject { width: 158px; }
 .issue-filter-q { width: 268px; }
-.issue-stat { margin-left: auto; font-size: 12.5px; color: var(--sub); }
-.issue-tip { margin-bottom: 10px; font-size: 12px; color: var(--muted); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 6px; padding: 7px 11px; }
-.issue-tip span { margin-left: 8px; }
 .issue-table { width: 100%; font-size: 12.5px; }
 .issue-table :deep(.el-table__row) { cursor: pointer; }
 .issue-year { font-weight: 600; color: var(--primary-dark); }
