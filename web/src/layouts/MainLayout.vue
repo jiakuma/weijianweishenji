@@ -50,7 +50,7 @@
             </el-button>
             <template #dropdown>
               <el-dropdown-menu>
-                <template v-if="auth.isAdmin">
+                <template v-if="auth.canSwitchUser">
                   <div class="switch-user-head">切换账号</div>
                   <el-dropdown-item
                     v-for="u in switchableUsers"
@@ -66,9 +66,8 @@
                       <span v-if="u.id === auth.currentUser?.id" class="switch-user-current">当前</span>
                     </span>
                   </el-dropdown-item>
-                  <el-dropdown-item command="password" divided>修改密码</el-dropdown-item>
                 </template>
-                <el-dropdown-item v-if="!auth.isAdmin" command="password">修改密码</el-dropdown-item>
+                <el-dropdown-item command="password" :divided="auth.canSwitchUser">修改密码</el-dropdown-item>
                 <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -300,9 +299,9 @@ function onMobileNav(item: NavItem) {
 
 onMounted(async () => {
   await auth.fetchMe()
-  if (auth.isAdmin) {
+  if (auth.canSwitchUser) {
     try {
-      switchableUsers.value = (await api.listUsers()).filter((u) => u.enabled)
+      switchableUsers.value = await api.switchableUsers()
     } catch {
       switchableUsers.value = []
     }

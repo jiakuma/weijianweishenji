@@ -7,6 +7,7 @@ export interface AuthUser {
   displayName: string
   role: UserRole
   mustChangePassword?: boolean
+  canSwitchUser?: boolean
 }
 
 export interface LoginResult {

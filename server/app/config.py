@@ -76,6 +76,9 @@ class Settings:
     )
 
     AUTH_MODE: str = _env("AUTH_MODE", "local").lower()
+    # 测试开关：允许普通用户在账户下拉里切换身份。默认关闭（生产安全），
+    # 仅本机联调时置 true，切勿在生产环境开启。
+    ALLOW_USER_SWITCH: bool = _bool("ALLOW_USER_SWITCH")
     JWT_SECRET_KEY: str = _env("JWT_SECRET_KEY")
     # 本地账号首次启动的初始管理员密码；留空则随机生成并在启动日志打印一次
     DEFAULT_ADMIN_PASSWORD: str = _env("DEFAULT_ADMIN_PASSWORD")

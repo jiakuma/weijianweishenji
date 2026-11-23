@@ -20,6 +20,9 @@ os.environ.setdefault("APP_PORT", "5281")
 # 若复用 data/knowledge.db 会污染用户真实数据（历史上已发生多次）。
 TEST_DB = Path(__file__).resolve().parent / ".test_knowledge.db"
 os.environ["DB_URL"] = f"sqlite:///{TEST_DB}"
+# 鉴权测试默认按“生产安全态”运行：显式关闭普通用户切换开关，
+# 不受开发者 .env 里 ALLOW_USER_SWITCH=true 影响；需要开启的用例自行 monkeypatch。
+os.environ["ALLOW_USER_SWITCH"] = "false"
 
 TEST_PASSWORD = "TestPass123!"
 

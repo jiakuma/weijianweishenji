@@ -8,6 +8,8 @@ export const useAuthStore = defineStore('auth', () => {
   const currentUser = ref<AuthUser | null>(null)
   const isAdmin = computed(() => currentUser.value?.role === 'admin')
   const mustChangePassword = computed(() => currentUser.value?.mustChangePassword === true)
+  // 是否显示切换账号入口：管理员始终可见，普通用户取决于服务端测试开关。
+  const canSwitchUser = computed(() => currentUser.value?.canSwitchUser === true)
 
   /** 清空当前身份，同时丢弃按人隔离的问答会话，避免下一个账号看到上一个账号的会话。 */
   function clearUser(): void {
@@ -66,7 +68,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   return {
-    currentUser, isAdmin, mustChangePassword,
+    currentUser, isAdmin, mustChangePassword, canSwitchUser,
     fetchMe, login, switchUser, logout, clearUser, markPasswordChanged,
   }
 })

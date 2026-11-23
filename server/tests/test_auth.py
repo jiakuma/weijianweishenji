@@ -322,6 +322,41 @@ def test_switch_user_requires_admin(client, normal_user):
     assert response.json()["error"]["code"] == "FORBIDDEN"
 
 
+def test_user_switch_disabled_by_default(client, normal_user):
+    """测试开关默认关闭：普通用户既拿不到列表也不能切换，契约里 canSwitchUser=false。"""
+    me = client.get("/api/auth/me", headers=normal_user["headers"])
+    assert me.json()["canSwitchUser"] is False
+    assert client.get(
+        "/api/auth/switchable-users", headers=normal_user["headers"]
+    ).status_code == 403
+    assert client.post(
+        "/api/auth/switch-user", json={"userId": normal_user["id"]},
+        headers=normal_user["headers"],
+    ).status_code == 403
+
+
+def test_user_switch_enabled_for_normal_user(client, normal_user, monkeypatch):
+    """开启 ALLOW_USER_SWITCH 后：普通用户可列账号并切换，me 契约可切换标志为 true。"""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "ALLOW_USER_SWITCH", True)
+
+    listing = client.get("/api/auth/switchable-users", headers=normal_user["headers"])
+    assert listing.status_code == 200, listing.text
+    ids = {u["id"] for u in listing.json()}
+    assert normal_user["id"] in ids
+
+    me = client.get("/api/auth/me", headers=normal_user["headers"])
+    assert me.json()["canSwitchUser"] is True
+
+    resp = client.post(
+        "/api/auth/switch-user", json={"userId": normal_user["id"]},
+        headers=normal_user["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["user"]["canSwitchUser"] is True
+
+
 def test_switch_user_success_and_target_contract(client, normal_user, admin_headers):
     response = client.post(
         "/api/auth/switch-user",

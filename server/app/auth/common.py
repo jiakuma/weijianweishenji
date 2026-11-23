@@ -81,6 +81,8 @@ async def get_uinfo(request: Request) -> dict[str, Any]:
 
 def user_to_dict(user) -> dict[str, Any]:
     """User ORM → 前后端统一契约（camelCase，绝不含密码哈希）。"""
+    # 切换入口：管理员始终可见；普通用户仅在测试开关 ALLOW_USER_SWITCH 打开时可见。
+    can_switch = bool(getattr(user, "role", "") == "admin" or settings.ALLOW_USER_SWITCH)
     return {
         "id": user.id,
         "username": user.username,
@@ -88,6 +90,7 @@ def user_to_dict(user) -> dict[str, Any]:
         "role": user.role,
         "mustChangePassword": bool(user.must_change_password),
         "enabled": bool(user.enabled),
+        "canSwitchUser": can_switch,
     }
 
 

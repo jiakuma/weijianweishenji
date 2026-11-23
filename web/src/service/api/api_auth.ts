@@ -29,6 +29,10 @@ export const authApi = {
     return request<LoginResult>('/api/auth/switch-user', post({ userId }))
   },
 
+  switchableUsers() {
+    return request<UserInfoRow[]>('/api/auth/switchable-users')
+  },
+
   listUsers() {
     return request<UserInfoRow[]>('/api/users')
   },

@@ -95,15 +95,45 @@ def change_password(body: ChangePasswordBody, user: dict = Depends(get_current_u
     return {"ok": True}
 
 
-@router.post("/switch-user")
-def switch_user(body: SwitchUserBody, admin: dict = Depends(require_admin)):
-    """管理员免密切换到目标账号（仅 local 模式），签发与 login 相同格式的 JWT。
+@router.get("/switchable-users")
+def switchable_users(current: dict = Depends(get_current_user)):
+    """返回账户下拉里可切换的账号列表。
 
-    仅用于测试不同角色：不校验目标用户的 must_change_password，
-    但 user 契约里保留真实标志，由前端按既有规则决定跳转改密页。
+    管理员始终可见；普通用户仅在测试开关 ALLOW_USER_SWITCH 打开时可见。
+    只返回切换所需的最小字段，不含 lastLoginAt 等非必要信息。
     """
     if settings.is_sso:
         raise ForbiddenError("SSO 模式不支持切换账号")
+    if current.get("role") != "admin" and not settings.ALLOW_USER_SWITCH:
+        raise ForbiddenError("当前配置不允许切换账号")
+    with SessionLocal() as session:
+        rows = session.query(User).filter(User.enabled.is_(True)).order_by(
+            User.created_at, User.username
+        ).all()
+        return [
+            {
+                "id": r.id,
+                "username": r.username,
+                "displayName": r.display_name or r.username,
+                "role": r.role,
+                "enabled": True,
+            }
+            for r in rows
+        ]
+
+
+@router.post("/switch-user")
+def switch_user(body: SwitchUserBody, current: dict = Depends(get_current_user)):
+    """免密切换到目标账号（仅 local 模式），签发与 login 相同格式的 JWT。
+
+    管理员始终可用；普通用户仅在测试开关 ALLOW_USER_SWITCH 打开时可用。
+    模拟切换跳过目标账号的强制改密，方便直接以该身份测试；
+    不改数据库标志——目标账号自己正常登录仍需改密。
+    """
+    if settings.is_sso:
+        raise ForbiddenError("SSO 模式不支持切换账号")
+    if current.get("role") != "admin" and not settings.ALLOW_USER_SWITCH:
+        raise ForbiddenError("当前配置不允许切换账号")
     target_id = body.userId.strip()
     with SessionLocal() as session:
         user = session.get(User, target_id)
