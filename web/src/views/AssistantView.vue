@@ -835,7 +835,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.qa-shell { display: flex; flex-direction: column; height: 100%; max-width: 860px; margin: 0 auto; }
+.qa-shell { display: flex; flex-direction: column; height: 100%; max-width: 900px; margin: 0 auto; padding: 8px 32px 0; }
 .qa-shell.is-empty .qa-list { justify-content: center; }
 
 .qa-list { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 4px 20px; display: flex; flex-direction: column; gap: 18px; }
