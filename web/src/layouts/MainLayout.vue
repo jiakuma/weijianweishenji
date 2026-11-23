@@ -75,7 +75,7 @@
         </div>
       </header>
 
-      <main class="main-scroll" :class="{ 'is-chat': isQa }">
+      <main class="main-scroll" :class="{ 'is-chat': isQa, 'is-library': isLibrary }">
         <div class="page-body">
           <!-- 会话栏在顶栏之下，不再与顶栏并排，所有页面共用同一条顶栏 -->
           <aside v-if="isQa" class="qa-rail">
@@ -178,6 +178,7 @@ const switchableUsers = ref<UserInfoRow[]>([])
 
 const CHAT_PATHS = ['/assistant', '/conflict', '/contract', '/workpaper']
 const isQa = computed(() => CHAT_PATHS.some((p) => route.path.startsWith(p)))
+const isLibrary = computed(() => route.path === '/library' || route.path.startsWith('/library/'))
 const currentModule = computed(() => {
   const p = CHAT_PATHS.find((x) => route.path.startsWith(x))
   return p ? p.slice(1) : ''

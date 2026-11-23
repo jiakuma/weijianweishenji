@@ -1,8 +1,5 @@
 <template>
   <div>
-    <div class="page-head">
-      <h2 class="page-title">资料库</h2>
-    </div>
     <div class="library-layout">
       <CategoryTree />
       <div class="library-pane">

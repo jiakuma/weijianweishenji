@@ -103,6 +103,11 @@ a { color: var(--primary); text-decoration: none; }
 .main-scroll.is-chat { overflow: hidden; padding: 0; }
 .main-scroll.is-chat .page-body { height: 100%; min-height: 0; }
 
+/* 资料库页：主区域贴紧侧边栏与顶栏，去掉外侧留白 */
+.main-scroll.is-library { padding: 16px 0 0; }
+.main-scroll.is-library .page { max-width: none; }
+.main-scroll.is-library .library-layout { border-radius: 0; border-left: none; min-height: calc(100vh - 84px); }
+
 /* ---------- module nav ---------- */
 .nav-group { padding: 12px 12px 4px; font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: .4px; }
 .nav-item.is-disabled { color: var(--muted); cursor: default; opacity: .72; }
