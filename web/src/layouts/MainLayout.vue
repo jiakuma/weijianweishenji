@@ -86,9 +86,6 @@
         <div class="page-body">
           <!-- 会话栏在顶栏之下，不再与顶栏并排，所有页面共用同一条顶栏 -->
           <aside v-if="isQa" class="qa-rail">
-            <div class="qa-rail-head">
-              <el-button plain class="qa-new-btn" :icon="Plus" @click="newSessionFromSidebar">{{ t('common.newSession') }}</el-button>
-            </div>
             <div class="qa-rail-list">
               <div v-if="!store.qaSessions.length" class="qa-rail-empty">{{ t('assistant.noSession') }}</div>
               <div
@@ -102,6 +99,9 @@
                 <div class="qa-rail-item-meta">{{ s.updatedAt }} · {{ s.count }} 条</div>
                 <el-button text size="small" class="qa-rail-del" @click.stop="removeSessionFromSidebar(s.id)">×</el-button>
               </div>
+            </div>
+            <div class="qa-rail-head">
+              <el-button plain class="qa-new-btn" :icon="Plus" @click="newSessionFromSidebar">{{ t('common.newSession') }}</el-button>
             </div>
           </aside>
           <div class="page">
@@ -133,9 +133,6 @@
       </div>
 
       <div class="side-sessions mobile">
-        <div class="side-sessions-head">
-          <el-button plain class="qa-new-btn" :icon="Plus" @click="newSessionFromSidebarMobile">{{ t('common.newSession') }}</el-button>
-        </div>
         <div class="side-sessions-list">
           <div v-if="!store.qaSessions.length" class="side-sessions-empty">{{ t('assistant.noSession') }}</div>
           <div
@@ -149,6 +146,9 @@
             <div class="side-session-meta">{{ s.updatedAt }} · {{ s.count }} 条</div>
             <el-button text size="small" class="side-session-del" @click.stop="removeSessionFromSidebar(s.id)">×</el-button>
           </div>
+        </div>
+        <div class="side-sessions-head">
+          <el-button plain class="qa-new-btn" :icon="Plus" @click="newSessionFromSidebarMobile">{{ t('common.newSession') }}</el-button>
         </div>
       </div>
     </el-drawer>
