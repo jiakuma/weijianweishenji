@@ -87,8 +87,7 @@
           <!-- 会话栏在顶栏之下，不再与顶栏并排，所有页面共用同一条顶栏 -->
           <aside v-if="isQa" class="qa-rail">
             <div class="qa-rail-head">
-              <span class="qa-rail-title">{{ t('common.sessionHistory') }}</span>
-              <el-button text size="small" :icon="Plus" @click="newSessionFromSidebar">{{ t('common.newSession') }}</el-button>
+              <el-button plain class="qa-new-btn" :icon="Plus" @click="newSessionFromSidebar">{{ t('common.newSession') }}</el-button>
             </div>
             <div class="qa-rail-list">
               <div v-if="!store.qaSessions.length" class="qa-rail-empty">{{ t('assistant.noSession') }}</div>
@@ -135,8 +134,7 @@
 
       <div class="side-sessions mobile">
         <div class="side-sessions-head">
-          <span>{{ t('common.sessionHistory') }}</span>
-          <el-button text size="small" :icon="Plus" @click="newSessionFromSidebarMobile">{{ t('common.newSession') }}</el-button>
+          <el-button plain class="qa-new-btn" :icon="Plus" @click="newSessionFromSidebarMobile">{{ t('common.newSession') }}</el-button>
         </div>
         <div class="side-sessions-list">
           <div v-if="!store.qaSessions.length" class="side-sessions-empty">{{ t('assistant.noSession') }}</div>
