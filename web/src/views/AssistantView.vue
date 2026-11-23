@@ -2,9 +2,18 @@
   <div class="qa-shell" :class="{ 'is-empty': !messages.length }">
     <div ref="listEl" class="qa-list">
       <div v-if="!messages.length" class="qa-empty">
-        <div class="qa-empty-hint">{{ cfg.empty }}</div>
-        <div class="qa-suggests">
-          <button v-for="q in cfg.suggests" :key="q" class="qa-suggest" @click="useSuggest(q)">{{ q }}</button>
+        <div class="welcome">
+          <div class="welcome-icon"><el-icon><component :is="cfg.icon" /></el-icon></div>
+          <h1 class="welcome-title">{{ cfg.title }}</h1>
+          <p class="welcome-desc">{{ cfg.desc }}</p>
+          <div class="welcome-divider"><span>试着这样问</span></div>
+          <div class="qa-suggests">
+            <button v-for="q in cfg.suggests" :key="q" class="qa-suggest" @click="useSuggest(q)">
+              <el-icon class="suggest-spark"><ChatDotRound /></el-icon>
+              <span>{{ q }}</span>
+              <el-icon class="suggest-arrow"><ArrowRight /></el-icon>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -141,20 +150,32 @@
         {{ f.name }}
       </el-tag>
     </div>
-    <div class="qa-input">
-      <el-upload :auto-upload="false" :show-file-list="false" multiple :accept="ACCEPT" :on-change="onPick">
-        <el-button circle text :icon="Paperclip" :disabled="sending" />
-      </el-upload>
-      <el-input
-        v-model="input"
-        type="textarea"
-        :rows="2"
-        resize="none"
-        :placeholder="t('assistant.placeholder')"
-        @keydown.enter.exact.prevent="send"
-      />
-      <el-button v-if="sending" type="danger" plain @click="stopStream">{{ t('assistant.stop') }}</el-button>
-      <el-button v-else type="primary" :disabled="!input.trim() && !picked.length" :loading="uploading" @click="send">{{ t('assistant.send') }}</el-button>
+    <div class="qa-composer">
+      <div class="composer-card">
+        <el-input
+          v-model="input"
+          class="composer-textarea"
+          type="textarea"
+          :rows="2"
+          resize="none"
+          :placeholder="t('assistant.placeholder')"
+          @keydown.enter.exact.prevent="send"
+        />
+        <div class="composer-bar">
+          <el-upload :auto-upload="false" :show-file-list="false" multiple :accept="ACCEPT" :on-change="onPick">
+            <button class="composer-attach" :disabled="sending" title="上传文件">
+              <el-icon><Paperclip /></el-icon>
+              <span>附件</span>
+            </button>
+          </el-upload>
+          <span class="composer-hint">Enter 发送 · Shift + Enter 换行</span>
+          <el-button v-if="sending" class="composer-send" type="danger" plain @click="stopStream">{{ t('assistant.stop') }}</el-button>
+          <el-button v-else class="composer-send" type="primary" :disabled="!input.trim() && !picked.length" :loading="uploading" @click="send">
+            <el-icon><ArrowRight /></el-icon>
+            <span>{{ t('assistant.send') }}</span>
+          </el-button>
+        </div>
+      </div>
     </div>
 
     <el-drawer v-model="citeDrawerVisible" title="引用详情" size="560px" append-to-body>
@@ -216,7 +237,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Paperclip } from '@element-plus/icons-vue'
+import { Paperclip, ChatDotRound, Connection, Tickets, Document, ArrowRight } from '@element-plus/icons-vue'
 import { ElMessage, type UploadProps } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/api'
@@ -237,24 +258,35 @@ const moduleKey = computed(() => {
   const m = String(route.meta.module || '')
   return ['assistant', 'conflict', 'contract', 'workpaper'].includes(m) ? m : 'assistant'
 })
-const moduleConfig: Record<string, { empty: string; suggests: string[]; defaultQ: string }> = {
+const moduleConfig: Record<string, {
+  title: string; desc: string; icon: typeof ChatDotRound;
+  suggests: string[]; defaultQ: string
+}> = {
   assistant: {
-    empty: t('assistant.guide.assistant'),
+    title: '审计工作助手',
+    desc: '基于已导入的资料与历史审计问题，随时提问、核对依据，答案附带可追溯的引用。',
+    icon: ChatDotRound,
     suggests: ['总结最近导入的资料要点', '对比各文档里的方案差异', '找出与某某主题相关的关键结论'],
     defaultQ: '请分析这些文件',
   },
   conflict: {
-    empty: t('assistant.guide.conflict'),
+    title: '制度互斥检测',
+    desc: '上传多份制度文件，自动识别条款之间的冲突与互斥，输出可核对的差异报告。',
+    icon: Connection,
     suggests: ['检查上传制度之间有没有互斥', '这两份制度对同一事项的规定是否打架'],
     defaultQ: '请对这些文件做制度互斥检测',
   },
   contract: {
-    empty: t('assistant.guide.contract'),
+    title: '合同审计',
+    desc: '上传合同及相关附件，自动核查关键字段、条款合规性与跨文件勾稽关系。',
+    icon: Tickets,
     suggests: ['帮我看看合同有没有什么问题', '核对合同与附件的关键字段是否一致'],
     defaultQ: '请帮我审计这些合同文件',
   },
   workpaper: {
-    empty: t('assistant.guide.workpaper'),
+    title: '底稿审核',
+    desc: '对照实施方案的审计要点，逐项核对工作底稿是否覆盖、形成明确的审核结论。',
+    icon: Document,
     suggests: ['帮我复核这些审计工作底稿', '检查底稿是否覆盖实施方案要求的事项'],
     defaultQ: '请帮我审核这些底稿',
   },
@@ -806,20 +838,47 @@ onUnmounted(() => {
 .qa-shell { display: flex; flex-direction: column; height: 100%; max-width: 860px; margin: 0 auto; }
 .qa-shell.is-empty .qa-list { justify-content: center; }
 
-.qa-list { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 2px 16px; display: flex; flex-direction: column; gap: 14px; }
+.qa-list { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 4px 20px; display: flex; flex-direction: column; gap: 18px; }
+.qa-list::-webkit-scrollbar, .qa-rail-list::-webkit-scrollbar { width: 7px; }
+.qa-list::-webkit-scrollbar-thumb, .qa-rail-list::-webkit-scrollbar-thumb { background: #d9e0ec; border-radius: 8px; }
+.qa-list::-webkit-scrollbar-thumb:hover, .qa-rail-list::-webkit-scrollbar-thumb:hover { background: #c4cddd; }
 
-.qa-empty { text-align: center; padding: 8px 0 28px; }
-.qa-empty-hint { font-size: 14px; color: var(--sub); margin-bottom: 18px; }
-.qa-suggests { display: flex; flex-wrap: wrap; gap: 9px; justify-content: center; }
-.qa-suggest { font-size: 13px; color: var(--primary-dark); background: var(--surface); border: 1px solid #d6e2fd; border-radius: 18px; padding: 7px 15px; cursor: pointer; transition: all .15s; }
-.qa-suggest:hover { background: var(--primary-soft); border-color: var(--primary); }
+.qa-empty { display: flex; align-items: center; justify-content: center; padding: 8px 0 24px; }
+.welcome { width: 100%; max-width: 560px; text-align: center; animation: welcome-in .45s ease both; }
+@keyframes welcome-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.welcome-icon {
+  width: 62px; height: 62px; margin: 0 auto 20px; border-radius: 18px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  color: #fff; display: grid; place-items: center;
+  box-shadow: 0 10px 26px rgba(74, 91, 214, .28);
+}
+.welcome-icon .el-icon { font-size: 30px; }
+.welcome-title { font-size: 24px; font-weight: 700; letter-spacing: .3px; margin: 0 0 10px; color: var(--text); }
+.welcome-desc { font-size: 14px; line-height: 1.8; color: var(--sub); margin: 0 auto; max-width: 460px; }
+.welcome-divider { display: flex; align-items: center; gap: 14px; margin: 30px 0 16px; color: var(--muted); font-size: 12px; }
+.welcome-divider::before, .welcome-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.qa-suggests { display: flex; flex-direction: column; gap: 9px; }
+.qa-suggest {
+  display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  font-size: 13.5px; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 12px; padding: 13px 16px; cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, transform .12s;
+}
+.qa-suggest:hover { border-color: var(--primary); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.qa-suggest > span { flex: 1; }
+.suggest-spark { color: var(--primary); font-size: 16px; }
+.suggest-arrow { color: var(--muted); font-size: 13px; transition: transform .15s, color .15s; }
+.qa-suggest:hover .suggest-arrow { transform: translateX(3px); color: var(--primary); }
 .qa-msg { display: flex; }
 .qa-msg.user { justify-content: flex-end; }
 .qa-msg.assistant { justify-content: flex-start; }
 
-.bubble { max-width: 78%; padding: 12px 15px; border-radius: 12px; line-height: 1.85; font-size: 14px; word-break: break-word; }
-.bubble.user { background: var(--primary); color: #fff; border-bottom-right-radius: 3px; }
-.bubble.bot { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+.bubble { max-width: 80%; padding: 13px 17px; border-radius: 15px; line-height: 1.85; font-size: 14px; word-break: break-word; box-shadow: var(--shadow-sm); }
+.bubble.user {
+  background: linear-gradient(135deg, var(--primary), #5666dd); color: #fff;
+  border-bottom-right-radius: 4px; box-shadow: 0 4px 14px rgba(74, 91, 214, .2);
+}
+.bubble.bot { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .bubble.error { color: #d35b52; border-color: #f3c9c6; }
 
 .bubble.loading, .bubble-inline-loading { color: var(--muted); display: inline-flex; align-items: center; gap: 5px; font-size: 13px; }
@@ -885,13 +944,34 @@ onUnmounted(() => {
 .qa-retrieval-label { font-size: 11px; color: var(--muted); }
 .qa-retrieval-tag { font-size: 11px; color: var(--primary-dark); background: var(--primary-soft); border: 1px solid #d6e2fd; border-radius: 6px; padding: 2px 8px; }
 
-.qa-input { display: flex; gap: 10px; align-items: flex-end; padding: 12px 2px 4px; border-top: 1px solid var(--border); }
-.qa-input .el-button { flex: 0 0 auto; }
-.qa-input .el-upload { flex: 0 0 auto; }
+.qa-composer { padding: 12px 0 6px; }
+.composer-card {
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: 16px; padding: 6px 8px 8px; box-shadow: var(--shadow-md);
+  transition: border-color .18s, box-shadow .18s;
+}
+.composer-card:focus-within { border-color: var(--primary); box-shadow: 0 6px 28px rgba(74, 91, 214, .14); }
+.composer-textarea :deep(.el-textarea__inner) {
+  border: none; box-shadow: none !important; background: transparent;
+  padding: 10px 12px 4px; font-size: 14px; line-height: 1.7; color: var(--text);
+}
+.composer-textarea :deep(.el-textarea__inner::placeholder) { color: var(--muted); }
+.composer-bar { display: flex; align-items: center; gap: 10px; padding: 2px 6px 0; }
+.composer-bar .el-upload { flex: 0 0 auto; }
+.composer-attach {
+  display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 11px;
+  background: transparent; border: 1px solid var(--border); border-radius: 9px;
+  color: var(--sub); font-size: 12.5px; cursor: pointer; transition: all .15s;
+}
+.composer-attach:hover { color: var(--primary-dark); border-color: var(--primary); background: var(--primary-hover); }
+.composer-attach:disabled { opacity: .5; cursor: not-allowed; }
+.composer-hint { font-size: 11.5px; color: var(--muted); }
+.composer-send { min-width: 88px; height: 34px; border-radius: 9px; font-weight: 600; margin-left: auto; }
+.composer-send .el-icon { margin-right: 4px; }
 
 .user-files { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
 .user-file-chip { font-size: 11px; background: rgba(255, 255, 255, 0.18); border-radius: 5px; padding: 2px 8px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.qa-picked { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 2px 0; }
+.qa-picked { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 6px 8px; }
 
 .contract-report { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .contract-report-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; font-weight: 600; color: var(--primary, #2f6690); }

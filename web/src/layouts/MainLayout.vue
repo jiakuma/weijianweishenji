@@ -40,14 +40,15 @@
         <el-button class="menu-trigger" text @click="mobileNav = true">
           <el-icon :size="18"><Menu /></el-icon>
         </el-button>
-        <!-- 顶栏是整个系统的门面：固定为平台标识，模块名称与功能留在左侧导航和主工作区 -->
-        <span class="topbar-title">{{ t('app.name') }}</span>
+        <!-- 顶栏显示当前所在页，避免与左侧品牌重复 -->
+        <span class="topbar-title">{{ currentPageTitle }}</span>
         <div class="topbar-right">
-          <span class="topbar-user">{{ auth.currentUser?.displayName || auth.currentUser?.username || '' }}</span>
           <el-dropdown trigger="click" @command="onUserCommand">
-            <el-button text size="small" class="topbar-user-btn">
-              账户 <el-icon><ArrowDown /></el-icon>
-            </el-button>
+            <button class="account-btn">
+              <span class="account-avatar">{{ (auth.currentUser?.displayName || auth.currentUser?.username || '用').slice(0, 1) }}</span>
+              <span class="account-name">{{ auth.currentUser?.displayName || auth.currentUser?.username || '' }}</span>
+              <el-icon class="account-caret"><ArrowDown /></el-icon>
+            </button>
             <template #dropdown>
               <el-dropdown-menu>
                 <template v-if="auth.canSwitchUser">
@@ -226,6 +227,13 @@ const navGroups = computed(() => {
   ]
 })
 
+/** 顶栏显示当前所在页名称（不再重复平台名） */
+const currentPageTitle = computed(() => {
+  const all = navGroups.value.flatMap((g) => g.items)
+  const hit = all.find((item) => isActive(item.path))
+  return hit?.label || t('app.name')
+})
+
 async function onUserCommand(command: string): Promise<void> {
   if (command.startsWith('switch:')) {
     await switchAccount(command.slice('switch:'.length))
@@ -328,10 +336,21 @@ onUnmounted(() => store.stopPolling())
 </script>
 
 <style scoped>
-.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-.topbar-user { font-size: 13px; color: var(--sub); white-space: nowrap; }
-.topbar-user-btn { color: var(--sub); }
-.switch-user-head { padding: 6px 12px 4px; font-size: 12px; color: var(--sub); }
+.topbar-right { margin-left: auto; display: flex; align-items: center; }
+.account-btn {
+  display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 10px 0 5px;
+  background: transparent; border: 1px solid transparent; border-radius: 20px; cursor: pointer;
+  color: var(--text); transition: background .15s, border-color .15s;
+}
+.account-btn:hover { background: var(--surface-soft); border-color: var(--border); }
+.account-avatar {
+  width: 28px; height: 28px; border-radius: 50%; flex: 0 0 28px;
+  background: linear-gradient(135deg, var(--primary), var(--accent)); color: #fff;
+  display: grid; place-items: center; font-size: 13px; font-weight: 650;
+}
+.account-name { font-size: 13px; font-weight: 500; white-space: nowrap; }
+.account-caret { font-size: 12px; color: var(--muted); }
+.switch-user-head { padding: 6px 12px 6px; font-size: 11.5px; font-weight: 600; color: var(--muted); letter-spacing: .4px; }
 .switch-user-row { display: flex; align-items: center; gap: 8px; }
-.switch-user-current { margin-left: auto; font-size: 12px; color: var(--sub); }
+.switch-user-current { margin-left: auto; font-size: 12px; color: var(--muted); }
 </style>
