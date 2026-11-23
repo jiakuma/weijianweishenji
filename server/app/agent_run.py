@@ -184,6 +184,8 @@ _SYSTEM_NATIVE = (
     "3. 最终答案输出严格 JSON：{\"conclusion\": \"正文\", \"basis\": [\"依据1\", \"依据2\"]}。\n"
     "   conclusion 用自然语言 Markdown 写：先给一句核心结论，再按需用「**小标题**」分段、"
     "- 列表列要点，把关键数字和判断写清楚；不要写成机械的一句话，也不要复述工具调用过程。\n"
+    "   禁止在答案里写检索过程统计或技术术语：不要出现「检索命中 N 篇文档 / N 条切片 / 主要分类为…」"
+    "「召回」「切片」「向量检索」「相关度」等字样；直接给出制度名称、文号和要点，并保留「须由审计人员复核」的提示即可。\n"
     "4. 引用编号 [数字] 直接内联在相关句子末尾，编号取自工具结果里的「可用引用」；basis 放次要依据。\n"
     "5. 若问题含「它 / 那个 / 上面 / 刚才 / 再 / 这几步」等指代，必须先用「最近对话」补全成完整问题"
     "再检索，不要直接要求用户补充；只有最近对话里确实找不到指代对象时才请用户补充。\n"
@@ -209,6 +211,8 @@ _FINAL_SYSTEM = (
     "输出严格 JSON：{\"conclusion\": \"正文\", \"basis\": [\"依据1\"]}。"
     "conclusion 用自然语言 Markdown 写：先给核心结论，再按需用 **小标题** 分段、- 列表列要点，"
     "把关键数字和判断写清楚，不要只写一句干巴巴的话。"
+    "禁止写检索过程统计或技术术语：不要出现「检索命中 N 篇文档 / N 条切片 / 主要分类为…」「召回」「切片」「向量检索」「相关度」等字样，"
+    "直接给出制度名称、文号和要点，并保留「须由审计人员复核」的提示。"
     "引用编号 [数字] 内联在相关句末，basis 放次要依据。不要输出 JSON 以外的任何内容。"
 )
 
@@ -219,6 +223,8 @@ _SYSTEM_JSON = (
     "{\"tool_calls\": [{\"name\": \"工具名\", \"args\": {...}}]}   ← 还要查资料\n"
     "{\"answer\": {\"conclusion\": \"正文\", \"basis\": [\"依据1\"]}}   ← 可以回答了\n"
     "conclusion 用自然语言 Markdown：先核心结论，再按需用 **小标题** 分段、- 列表列要点，关键数字写清楚，不要只写一句话。\n"
+    "禁止写检索过程统计或技术术语：不要出现「检索命中 N 篇文档 / N 条切片 / 主要分类为…」「召回」「切片」「向量检索」「相关度」等字样，"
+    "直接给出制度名称、文号和要点，并保留「须由审计人员复核」的提示。\n"
     "规则：只依据工具返回的资料回答，不得编造；资料不足就明确说明；"
     "引用编号 [数字] 内联在相关句末，编号取自工具结果里的「可用引用」；basis 放次要依据；"
     "问题含指代时必须先用「最近对话」补全成完整问题再检索，只有历史里也找不到对象时才请用户补充；"
@@ -262,6 +268,25 @@ def _parse_final(raw: str) -> dict | None:
     from .qa import build_markdown
     return {"conclusion": conclusion, "basis": basis,
             "markdown": build_markdown(conclusion, basis)}
+
+
+# 模型偶尔会把工具返回里的检索统计当成答案输出（如「检索命中 50 篇相关文档、
+# 约 110 条切片，主要分类为…」）。这类过程细节对审计师无意义，行级删除兜底。
+_RE_RETRIEVAL_STAT = re.compile(
+    r"(检索命中|共命中|命中\s*\d+|召回\s*\d+|检索到\s*\d+).{0,40}(篇|条|切片|文档|分类)"
+    r"|(约|共)?\s*\d+\s*条切片"
+    r"|主要分类为"
+    r"|(\d+\s*条|\d+\s*篇).{0,12}相关(片段|文档|资料)"
+)
+
+
+def _strip_retrieval_stats(text: str) -> str:
+    """删除检索过程统计/技术术语所在的行，保留制度名称、文号等实质内容。"""
+    if not text:
+        return text
+    kept = [line for line in text.splitlines()
+            if not _RE_RETRIEVAL_STAT.search(line.strip())]
+    return "\n".join(kept).strip()
 
 
 def _post(payload: dict, timeout: int) -> dict:
@@ -844,13 +869,19 @@ def run_agent(question: str, mode: str, run_id: str, session_id: str = "",
         if not final.get("conclusion"):
             if pool:
                 final = {
-                    "conclusion": f"已查到 {len(pool)} 条相关片段，但未能在限定步数内生成完整结论。",
+                    "conclusion": "已查到相关资料，但未能在限定步数内生成完整结论，以下为供参考的制度条款。",
                     "basis": [f"《{pool[i]['docTitle']}》第 {pool[i]['page']} 页 [{i + 1}]"
                               for i in range(min(3, len(pool)))],
                 }
             else:
                 final = {"conclusion": "没有查到能回答这个问题的资料，换个说法或先导入相关资料。",
                          "basis": []}
+        # 兜底：模型偶尔把检索统计写进答案，行级删除后重算 markdown，保证展示与结论一致。
+        cleaned = _strip_retrieval_stats(final.get("conclusion", ""))
+        if cleaned and cleaned != final.get("conclusion"):
+            final["conclusion"] = cleaned
+            final.pop("markdown", None)  # 让下方 build_markdown 用清洗后的结论重算
+        final["basis"] = [b for b in (_strip_retrieval_stats(x) for x in final.get("basis", [])) if b]
         notice = {
             "done": f"智能体自主检索完成（{steps} 步 · 原生工具调用：{'是' if native else '否'}），内容仅供参考；请点击引用核对原文。",
             "stopped": "已停止，返回已查到的结果。",
