@@ -92,8 +92,6 @@
                 <div class="qa-rail-item-meta">{{ s.updatedAt }} · {{ s.count }} 条</div>
                 <el-button text size="small" class="qa-rail-del" @click.stop="removeSessionFromSidebar(s.id)">×</el-button>
               </div>
-            </div>
-            <div class="qa-rail-head">
               <el-button plain class="qa-new-btn" :icon="Plus" @click="newSessionFromSidebar">{{ t('common.newSession') }}</el-button>
             </div>
           </aside>
@@ -139,8 +137,6 @@
             <div class="side-session-meta">{{ s.updatedAt }} · {{ s.count }} 条</div>
             <el-button text size="small" class="side-session-del" @click.stop="removeSessionFromSidebar(s.id)">×</el-button>
           </div>
-        </div>
-        <div class="side-sessions-head">
           <el-button plain class="qa-new-btn" :icon="Plus" @click="newSessionFromSidebarMobile">{{ t('common.newSession') }}</el-button>
         </div>
       </div>
