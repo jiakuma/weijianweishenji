@@ -20,7 +20,7 @@
 
         <div v-else-if="m.error" class="bubble bot error">{{ m.error }}</div>
 
-        <div v-else-if="m.result" class="bubble bot">
+        <div v-else-if="m.result" class="bubble bot" :class="{ 'is-plain': !m.contract && !m.workpaper && !m.conflict }">
           <div v-if="m.streaming && !m.answerText && !m.contract && !m.conflict && !m.workpaper" class="bubble-inline-loading">
             <span class="dot" /><span class="dot" /><span class="dot" /> {{ m.conflictStage || m.contractStage || m.workpaperStage || t('assistant.analyzing') }}
           </div>
@@ -806,11 +806,14 @@ onUnmounted(() => {
 .qa-msg.assistant { justify-content: flex-start; }
 
 .bubble { max-width: 80%; padding: 13px 17px; border-radius: 15px; line-height: 1.85; font-size: 14px; word-break: break-word; box-shadow: var(--shadow-sm); }
+/* 用户消息：浅灰小气泡 */
 .bubble.user {
-  background: linear-gradient(135deg, var(--primary), #5666dd); color: #fff;
-  border-bottom-right-radius: 4px; box-shadow: 0 4px 14px rgba(74, 91, 214, .2);
+  background: #eaeef6; color: var(--text);
+  border-bottom-right-radius: 4px; box-shadow: none;
 }
 .bubble.bot { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+/* 助手纯文字回答：无气泡、纯文本左对齐（DeepSeek 回答风格）；报告卡片不加 is-plain 保持卡片 */
+.bubble.bot.is-plain { background: transparent; border: none; box-shadow: none; padding: 2px 0; max-width: 100%; }
 .bubble.error { color: #d35b52; border-color: #f3c9c6; }
 
 /* 空状态：欢迎语与输入框一起垂直居中（DeepSeek 风格） */
@@ -917,7 +920,7 @@ onUnmounted(() => {
 .composer-send .el-icon { margin-right: 4px; }
 
 .user-files { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
-.user-file-chip { font-size: 11px; background: rgba(255, 255, 255, 0.18); border-radius: 5px; padding: 2px 8px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-file-chip { font-size: 11px; background: rgba(255, 255, 255, 0.7); color: var(--sub); border-radius: 5px; padding: 2px 8px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qa-picked { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 6px 8px; }
 
 .contract-report { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
