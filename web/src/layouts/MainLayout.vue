@@ -40,6 +40,14 @@
         <el-button class="menu-trigger" text @click="mobileNav = true">
           <el-icon :size="18"><Menu /></el-icon>
         </el-button>
+        <nav class="crumb" aria-label="当前位置">
+          <span class="crumb-root" @click="go('/assistant')">
+            <el-icon><HomeFilled /></el-icon>
+            <span>审计工作平台</span>
+          </span>
+          <el-icon class="crumb-sep"><ArrowRight /></el-icon>
+          <span class="crumb-current">{{ currentPageTitle }}</span>
+        </nav>
         <div class="topbar-right">
           <el-dropdown trigger="click" @command="onUserCommand">
             <button class="account-btn">
@@ -156,7 +164,7 @@ import { computed, onMounted, onUnmounted, ref, watch, type Component } from 'vu
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ChatDotRound, ArrowDown, Collection, Document, FolderOpened, Menu, Plus, Setting, UserFilled } from '@element-plus/icons-vue'
+import { ChatDotRound, ArrowDown, ArrowRight, Collection, Document, FolderOpened, HomeFilled, Menu, Plus, Setting, UserFilled } from '@element-plus/icons-vue'
 import KnowledgeMap from '@/components/KnowledgeMap.vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { useAuthStore } from '@/stores/auth'
@@ -223,6 +231,13 @@ const navGroups = computed(() => {
     { label: t('nav.groupAudit'), items: assistantModules.value },
     { label: t('nav.groupBasic'), items: basic },
   ]
+})
+
+/** 面包屑末段：当前所在页名称 */
+const currentPageTitle = computed(() => {
+  const all = navGroups.value.flatMap((g) => g.items)
+  const hit = all.find((item) => isActive(item.path))
+  return hit?.label || t('app.name')
 })
 
 async function onUserCommand(command: string): Promise<void> {
@@ -327,6 +342,12 @@ onUnmounted(() => store.stopPolling())
 </script>
 
 <style scoped>
+.crumb { display: flex; align-items: center; gap: 9px; font-size: 13px; min-width: 0; }
+.crumb-root { display: inline-flex; align-items: center; gap: 6px; color: var(--sub); cursor: pointer; white-space: nowrap; transition: color .15s; }
+.crumb-root:hover { color: var(--primary-dark); }
+.crumb-root .el-icon { font-size: 15px; color: var(--primary); }
+.crumb-sep { font-size: 11px; color: var(--muted); }
+.crumb-current { color: var(--text); font-weight: 600; white-space: nowrap; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; }
 .account-btn {
   display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 10px 0 5px;
