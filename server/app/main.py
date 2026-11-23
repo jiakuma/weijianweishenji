@@ -352,6 +352,7 @@ async def local_access_guard(request: Request, call_next):
     token = request.headers.get("X-Access-Token") or request.cookies.get("uinfo", "")
     payload = verify_token(token)
     subject = str(payload.get("sub") or "") if payload else ""
+    impersonated = bool(payload.get("impersonated")) if payload else False
     if not subject:
         return _local_unauthorized()
     with SessionLocal() as session:
@@ -360,6 +361,10 @@ async def local_access_guard(request: Request, call_next):
             return _local_unauthorized()
         current = user_to_dict(user)
         must_change = bool(user.must_change_password)
+        # 管理员模拟切换的 token 跳过强制改密，整页重载后各接口才不会被 403 拦住。
+        if impersonated:
+            current["mustChangePassword"] = False
+            must_change = False
 
     if must_change and path not in MUST_CHANGE_EXEMPT:
         return JSONResponse(

@@ -113,9 +113,14 @@ def switch_user(body: SwitchUserBody, admin: dict = Depends(require_admin)):
             "sub": user.id,
             "username": user.username,
             "role": user.role,
+            # 管理员模拟切换：跳过目标账号的首次改密要求，方便直接以该身份测试。
+            # 只作用于本次签发的 token，不改数据库标志——目标账号自己正常登录仍需改密。
+            "impersonated": True,
         }
         token = create_token(payload)
         current = user_to_dict(user)
+        # 前端守卫据此决定是否跳改密页，模拟切换一律视为无需改密。
+        current["mustChangePassword"] = False
     return {"token": token, "user": current}
 
 

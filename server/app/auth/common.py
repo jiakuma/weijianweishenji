@@ -125,7 +125,12 @@ async def get_current_user(request: Request) -> dict[str, Any]:
             user = session.get(User, str(subject))
             if user is None or not user.enabled:
                 raise UnauthorizedError()
-            return user_to_dict(user)
+            current = user_to_dict(user)
+            # 管理员模拟切换签发的 token 带 impersonated：对外呈现为无需改密，
+            # 与 switch-user 返回的 user 契约保持一致，避免刷新后被守卫踢到改密页。
+            if payload.get("impersonated"):
+                current["mustChangePassword"] = False
+            return current
 
     # SSO 的 uinfo 只有 id/name，没有本地 users 记录；保持原有 SSO 行为
     if settings.is_sso and payload.get("id") is not None:

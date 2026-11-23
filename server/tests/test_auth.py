@@ -342,6 +342,45 @@ def test_switch_user_success_and_target_contract(client, normal_user, admin_head
     assert me.json()["id"] == normal_user["id"]
 
 
+def test_switch_user_bypasses_must_change_without_mutating_target(client, admin_headers):
+    """管理员模拟切到“需改密”账号：切换后接口畅通，但目标库的改密标志不变。"""
+    from app.auth.routes import hash_password
+    from app.db import SessionLocal, User, now_str
+
+    username = f"sw-mustchange-{uuid.uuid4().hex[:8]}"
+    with SessionLocal() as session:
+        target_id = f"user-{uuid.uuid4().hex[:12]}"
+        session.add(User(
+            id=target_id, username=username,
+            display_name="待改密切换目标", password_hash=hash_password(TEST_PASSWORD),
+            role="user", enabled=True, must_change_password=True, created_at=now_str(),
+        ))
+        session.commit()
+
+    resp = client.post(
+        "/api/auth/switch-user", json={"userId": target_id}, headers=admin_headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["user"]["mustChangePassword"] is False
+    impersonated_headers = {"X-Access-Token": body["token"]}
+    # 整页重载后 /me 与业务接口都不应再被强制改密拦截
+    me = client.get("/api/auth/me", headers=impersonated_headers)
+    assert me.status_code == 200
+    assert me.json()["mustChangePassword"] is False
+    assert client.get("/api/qa/sessions", headers=impersonated_headers).status_code == 200
+    # 目标账号数据库标志未被模拟切换改动：它自己正常登录仍须改密
+    with SessionLocal() as session:
+        assert session.get(User, target_id).must_change_password is True
+    own_login = client.post(
+        "/api/auth/login", json={"username": username, "password": TEST_PASSWORD}
+    )
+    assert client.get(
+        "/api/qa/sessions",
+        headers={"X-Access-Token": own_login.json()["token"]},
+    ).status_code == 403
+
+
 def test_switch_user_rejects_unknown_and_disabled(client, admin_headers):
     assert client.post(
         "/api/auth/switch-user", json={"userId": "nonexistent-user"},
