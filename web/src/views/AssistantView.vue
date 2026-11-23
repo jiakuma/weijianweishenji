@@ -127,21 +127,6 @@
             </div>
           </div>
 
-          <div v-if="m.result.citations?.length && !m.conflict" class="qa-cites">
-            <span class="qa-cites-label">引用</span>
-            <button
-              v-for="(c, ci) in m.result.citations"
-              :key="ci"
-              class="cite-chip"
-              :class="{ 'cite-chip-issue': c.kind === 'issue' }"
-              :title="c.kind === 'issue' ? '查看历史问题详情' : c.quote"
-              @click="openCitation(i, c.refNo || ci + 1)"
-            >
-              <template v-if="c.kind === 'issue'">历史问题·{{ c.sourceYear }}·{{ c.catL4 || c.category }}</template>
-              <template v-else>《{{ c.docTitle }}》第 {{ c.page }} 页</template>
-            </button>
-          </div>
-
           <div v-if="!m.streaming && m.result?.id && m.result.status !== 'running'" class="qa-feedback">
             <button class="fb-btn" :class="{ active: m.result?.feedback === 'good' }" :title="t('common.good')" @click="rate(i, 'good')">👍</button>
             <button class="fb-btn" :class="{ active: m.result?.feedback === 'bad' }" :title="t('common.bad')" @click="rate(i, 'bad')">👎</button>
@@ -874,13 +859,6 @@ onUnmounted(() => {
 
 .qa-basis { margin: 10px 0 0; padding-left: 18px; color: var(--sub); font-size: 13px; }
 .qa-basis li { margin: 3px 0; }
-
-.qa-cites { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.qa-cites-label { font-size: 12px; color: var(--muted); }
-.cite-chip { font-size: 12px; color: var(--primary-dark); background: var(--primary-soft); border: 1px solid #d6e2fd; border-radius: 7px; padding: 3px 9px; cursor: pointer; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cite-chip:hover { background: #dde7fe; }
-.cite-chip-issue { color: #b35c12; background: #fff1df; border-color: #f2cf9f; }
-.cite-chip-issue:hover { background: #ffe0b8; }
 
 .cite-detail-title { font-size: 17px; font-weight: 650; color: var(--text); line-height: 1.5; }
 .cite-detail-meta { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
