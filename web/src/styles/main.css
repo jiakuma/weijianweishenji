@@ -96,7 +96,6 @@ a { color: var(--primary); text-decoration: none; }
 .storage-bar span { display: block; height: 100%; background: var(--primary); border-radius: 4px; }
 .workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
 .topbar { height: 68px; flex: 0 0 68px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 14px; padding: 0 26px; }
-.topbar-title { font-size: 15px; font-weight: 650; color: var(--text); white-space: nowrap; }
 .menu-trigger { display: none; }
 .main-scroll { flex: 1; overflow-y: auto; padding: 24px 28px 44px; }
 .page-body { display: flex; align-items: stretch; min-height: calc(100vh - 136px); }

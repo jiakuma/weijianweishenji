@@ -40,8 +40,6 @@
         <el-button class="menu-trigger" text @click="mobileNav = true">
           <el-icon :size="18"><Menu /></el-icon>
         </el-button>
-        <!-- 顶栏显示当前所在页，避免与左侧品牌重复 -->
-        <span class="topbar-title">{{ currentPageTitle }}</span>
         <div class="topbar-right">
           <el-dropdown trigger="click" @command="onUserCommand">
             <button class="account-btn">
@@ -225,13 +223,6 @@ const navGroups = computed(() => {
     { label: t('nav.groupAudit'), items: assistantModules.value },
     { label: t('nav.groupBasic'), items: basic },
   ]
-})
-
-/** 顶栏显示当前所在页名称（不再重复平台名） */
-const currentPageTitle = computed(() => {
-  const all = navGroups.value.flatMap((g) => g.items)
-  const hit = all.find((item) => isActive(item.path))
-  return hit?.label || t('app.name')
 })
 
 async function onUserCommand(command: string): Promise<void> {
