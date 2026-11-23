@@ -670,7 +670,9 @@ async function decideConfirm(idx: number, decision: 'approve' | 'reject') {
 }
 
 function openDoc(c: QACitation) {
-  void router.push(`/document/${c.docId}?chunk=${c.chunkId}`)
+  // "打开原文"直接进文档页的原始文件 tab，与资料库/导入页打开文档保持一致；
+  // 不再带 chunk 参数（带了会切到「知识切片」tab，与按钮语义不符）。
+  void router.push(`/document/${c.docId}`)
 }
 
 const citeDrawerVisible = ref(false)
