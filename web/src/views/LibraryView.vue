@@ -74,7 +74,7 @@
           <div v-if="!store.docs.length && !store.loading" class="empty-box">这个分类下还没有资料</div>
         </div>
 
-        <div style="display: flex; justify-content: flex-end; padding: 12px 0">
+        <div class="pane-footer">
           <el-pagination
             v-model:current-page="page"
             :page-size="store.settings.pageSize"
