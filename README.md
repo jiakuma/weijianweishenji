@@ -83,4 +83,3 @@ cd web && npm run build
 - [PRD.md](PRD.md) — 产品需求文档
 - [CHANGELOG.md](CHANGELOG.md) — 版本变更记录
 - [deploy/DEPLOY.md](deploy/DEPLOY.md) — 部署与运维手册
-- [用户鉴权设计方案.md](用户鉴权设计方案.md) — 鉴权设计
