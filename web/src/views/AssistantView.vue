@@ -129,6 +129,7 @@
             <button class="fb-btn" :class="{ active: m.result?.feedback === 'good' }" :title="t('common.good')" @click="rate(i, 'good')">👍</button>
             <button class="fb-btn" :class="{ active: m.result?.feedback === 'bad' }" :title="t('common.bad')" @click="rate(i, 'bad')">👎</button>
             <button class="fb-btn fb-retry" :title="t('common.retry')" @click="retryMessage(i)">↻ 重试</button>
+            <button class="fb-btn fb-suggest" @click="openSuggest(i)">{{ t('assistant.suggest') }}</button>
           </div>
         </div>
       </div>
@@ -139,6 +140,7 @@
         {{ f.name }}
       </el-tag>
     </div>
+    <div v-if="moduleKey === 'workpaper'" class="qa-role-hint">{{ t('assistant.workpaperTip') }}</div>
     <div class="qa-composer">
       <div class="composer-card">
         <el-input
@@ -166,6 +168,14 @@
         </div>
       </div>
     </div>
+
+    <el-dialog v-model="suggestVisible" :title="t('assistant.suggestTitle')" width="480px" append-to-body>
+      <el-input v-model="suggestText" type="textarea" :rows="5" :placeholder="t('assistant.suggestPlaceholder')" maxlength="2000" show-word-limit />
+      <template #footer>
+        <el-button @click="suggestVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="suggestSending" :disabled="!suggestText.trim()" @click="submitSuggestion">{{ t('common.submit') }}</el-button>
+      </template>
+    </el-dialog>
 
     <el-drawer v-model="citeDrawerVisible" title="引用详情" size="560px" append-to-body>
       <div v-if="activeCitation" class="cite-detail">
@@ -272,6 +282,11 @@ const currentRunId = ref('')
 const sessionId = ref('')
 const picked = ref<File[]>([])
 const uploading = ref(false)
+
+const suggestVisible = ref(false)
+const suggestText = ref('')
+const suggestSending = ref(false)
+const suggestTarget = ref<{ qaId: string; rating: string } | null>(null)
 
 const ACCEPT = '.pdf,.docx,.doc,.txt,.md,.xlsx,.xls'
 const onPick: UploadProps['onChange'] = (file) => {
@@ -441,6 +456,35 @@ async function rate(idx: number, value: 'good' | 'bad') {
   } catch {
     r.feedback = prev
     ElMessage.error('反馈提交失败')
+  }
+}
+
+function openSuggest(idx: number) {
+  const m = messages.value[idx] as AssistantMsg
+  const r = m.result
+  if (!r?.id) return
+  suggestTarget.value = { qaId: r.id, rating: r.feedback || '' }
+  suggestText.value = ''
+  suggestVisible.value = true
+}
+
+async function submitSuggestion() {
+  const target = suggestTarget.value
+  if (!target || !suggestText.value.trim() || suggestSending.value) return
+  suggestSending.value = true
+  try {
+    await api.submitSuggestion(target.qaId, {
+      content: suggestText.value.trim(),
+      rating: target.rating,
+      module: moduleKey.value,
+      sessionId: sessionId.value,
+    })
+    suggestVisible.value = false
+    ElMessage.success('建议已提交')
+  } catch {
+    ElMessage.error('建议提交失败')
+  } finally {
+    suggestSending.value = false
   }
 }
 
@@ -922,6 +966,8 @@ onUnmounted(() => {
 .user-files { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px; }
 .user-file-chip { font-size: 11px; background: rgba(255, 255, 255, 0.7); color: var(--sub); border-radius: 5px; padding: 2px 8px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qa-picked { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 6px 8px; }
+.qa-role-hint { font-size: 11.5px; color: var(--muted); padding: 0 6px 8px; }
+.fb-suggest { font-size: 12px; margin-left: 2px; }
 
 .contract-report { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .contract-report-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; font-weight: 600; color: var(--primary, #2f6690); }

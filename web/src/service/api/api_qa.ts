@@ -1,6 +1,6 @@
 // 智能问答、Agent 会话、评测相关接口。
 import { post, request, streamRequest } from '@/service/request'
-import type { QAResult } from '@/types'
+import type { QAFeedbackItem, QAResult } from '@/types'
 
 export const qaApi = {
   askQuestion(question: string, mode = '混合', sessionId = '') {
@@ -123,5 +123,23 @@ export const qaApi = {
 
   feedbackQA(id: string, feedback: string) {
     return request<{ ok: boolean }>(`/api/qa/${id}/feedback`, post({ feedback }))
+  },
+
+  submitSuggestion(id: string, body: { content: string; rating: string; module: string; sessionId: string }) {
+    return request<{ ok: boolean; id: string }>(`/api/qa/${id}/suggestion`, post(body))
+  },
+
+  listFeedbacks(params: { status?: string; module?: string; start?: string; end?: string } = {}) {
+    const q = new URLSearchParams()
+    if (params.status) q.set('status', params.status)
+    if (params.module) q.set('module', params.module)
+    if (params.start) q.set('start', params.start)
+    if (params.end) q.set('end', params.end)
+    const suffix = q.toString()
+    return request<QAFeedbackItem[]>(`/api/admin/feedbacks${suffix ? `?${suffix}` : ''}`)
+  },
+
+  handleFeedback(id: string, status: string) {
+    return request<{ ok: boolean }>(`/api/admin/feedbacks/${id}/handle`, post({ status }))
   },
 }

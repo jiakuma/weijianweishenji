@@ -190,9 +190,75 @@ def _file_sort_key(name: str) -> tuple:
     return (0, int(m.group(1)), name) if m else (1, 0, name)
 
 
-def _identify_roles(files: list[dict], llm) -> tuple[list[dict], list[dict]]:
-    """先用文件名与正文特征分类，歧义文件再交给模型。"""
+def _stem(name: str) -> str:
+    """文件名去扩展名、去常见修饰，用于宽松匹配用户在对话里的简称。"""
+    s = os.path.basename(str(name or "")).strip()
+    s = re.sub(r"\.(docx?|pdf|txt|md|xlsx?|pptx?)$", "", s, flags=re.I)
+    s = s.replace("《", "").replace("》", "").replace("（", "(").replace("）", ")")
+    s = re.sub(r"\s+", "", s)
+    return s
+
+
+def _declared_plan_names(role_hint: str, files: list[dict]) -> set[str]:
+    """从对话声明里认出用户指定的上位文件，返回命中的原始文件名集合。
+
+    支持的说法：『XX 是上位文件』『上位文件：XX、YY』『把 XX 当上位文件』
+    以及省略说法『XX 是上位』『XX 是方案』。只保留能与实际文件名对上的，
+    避免误伤；没写清文件名的声明直接忽略，退回自动识别。
+    """
+    hint = str(role_hint or "").strip()
+    if not hint:
+        return set()
+    hit: set[str] = set()
+    # 按常见分隔拆出短句，逐句判断是否包含"上位"声明
+    segments = re.split(r"[。！!\n；;，,、]+", hint)
+    name_by_stem = {_stem(f["name"]): f["name"] for f in files}
+
+    def resolve(chunk: str) -> None:
+        chunk = chunk.strip(" ：:为是当做作把")
+        if not chunk:
+            return
+        c = _stem(chunk)
+        if not c:
+            return
+        for stem, original in name_by_stem.items():
+            if not stem or not c:
+                continue
+            # 双向包含：用户写简称或对上全名都算命中；短简称至少 2 字避免误匹配
+            if (len(c) >= 2 and (c in stem or stem in c)):
+                hit.add(original)
+
+    pattern = re.compile(
+        r"(.{0,60}?)\s*(?:是|作为|当作|当|为|属于|算)\s*(?:上位文件|上位|审计实施方案|实施方案|审计方案|方案)"
+        r"|(?:上位文件|上位|审计实施方案|实施方案|审计方案|方案)\s*(?:是|：|:|为|指|就是)?\s*(.{0,60})",
+        re.I,
+    )
+    for seg in segments:
+        for m in pattern.finditer(seg):
+            resolve(m.group(1) or "")
+            resolve(m.group(2) or "")
+    return hit
+
+
+def _identify_roles(files: list[dict], llm, plan_names: set[str] | None = None) -> tuple[list[dict], list[dict]]:
+    """先用文件名与正文特征分类，歧义文件再交给模型。
+
+    plan_names 为用户在对话里指定的上位文件名；命中者强制归入上位文件，
+    且不再参与底稿/佐证的自动识别。
+    """
     plans, workpapers, others = [], [], []
+    plan_names = plan_names or set()
+    for f in files:
+        name, text = f["name"], f.get("text", "")
+        head = text[:ROLE_EXCERPT]
+        if name in plan_names:
+            plans.append(f)
+        elif "审计实施方案" in name or "审计方案" in name or "审计通知书" in name:
+            plans.append(f)
+        elif "审计工作底稿" in name or "审计工作底稿" in head:
+            workpapers.append(f)
+        else:
+            others.append(f)
     for f in files:
         name, text = f["name"], f.get("text", "")
         head = text[:ROLE_EXCERPT]
@@ -478,11 +544,15 @@ def _build_report(files, plans, workpapers, items, errors) -> dict:
     }
 
 
-def analyze_workpapers(uploaded, task=None, llm=None):
-    """uploaded = [(filename, bytes), ...]。按审计事项逐项匹配底稿并判定。"""
+def analyze_workpapers(uploaded, task=None, llm=None, role_hint: str = ""):
+    """uploaded = [(filename, bytes), ...]。按审计事项逐项匹配底稿并判定。
+
+    role_hint 为对话里关于文件角色的声明，用于覆盖自动识别的上位文件。
+    """
     files = _parse_all(uploaded, task)
     errors = [f"{f['name']}：{f['error']}" for f in files if f.get("error")]
-    plans, workpapers = _identify_roles(files, llm)
+    declared = _declared_plan_names(role_hint, files)
+    plans, workpapers = _identify_roles(files, llm, plan_names=declared)
     if not workpapers:
         errors.append("未识别到审计工作底稿")
         return _build_report(files, plans, workpapers, [], errors)

@@ -132,6 +132,25 @@ class QARow(Base):
     owner_id = Column(String, index=True, default="")
 
 
+class QAFeedback(Base):
+    """用户对回答的文字建议，独立于 qa_history.feedback 的赞踩状态。"""
+    __tablename__ = "qa_feedbacks"
+    id = Column(String, primary_key=True)
+    qa_id = Column(String, index=True, default="")
+    session_id = Column(String, index=True, default="")
+    module = Column(String, default="assistant")
+    owner_id = Column(String, index=True, default="")
+    username = Column(String, default="")
+    rating = Column(String, default="")
+    question = Column(Text, default="")
+    answer = Column(Text, default="")
+    content = Column(Text, default="")
+    status = Column(String, default="pending", index=True)
+    handled_by = Column(String, default="")
+    handled_at = Column(String, default="")
+    created_at = Column(String, default="", index=True)
+
+
 class QASession(Base):
     """一次连续对话。不改动 qa_history，通过关联表把已有问答挂到会话上。
 
@@ -560,6 +579,26 @@ def qa_to_dict(q: QARow) -> dict:
     }
 
 
+def feedback_to_dict(f: QAFeedback, question: str = "") -> dict:
+    return {
+        "id": f.id,
+        "qaId": f.qa_id,
+        "sessionId": f.session_id,
+        "module": f.module,
+        "ownerId": f.owner_id,
+        "username": f.username,
+        "rating": f.rating,
+        "content": f.content,
+        "question": question or f.question,
+        "answer": f.answer,
+        "status": f.status,
+        "handledBy": f.handled_by,
+        "handledAt": f.handled_at,
+        "createdAt": f.created_at,
+        "question": question,
+    }
+
+
 def session_to_dict(s: QASession, count: int = 0, last_question: str = "") -> dict:
     return {
         "id": s.id,
@@ -688,6 +727,13 @@ def init_db() -> None:
     else:
         # 本地降级路径保留原有建表行为，仅用于开发验证
         Base.metadata.create_all(engine)
+        # 反馈表后加的问题/回答快照列：旧库补列，create_all 不会 ALTER 已有表
+        with engine.connect() as conn:
+            existing = {r[1] for r in conn.execute(sa_text("PRAGMA table_info(qa_feedbacks)"))}
+            for col in ("question", "answer"):
+                if existing and col not in existing:
+                    conn.execute(sa_text(f"ALTER TABLE qa_feedbacks ADD COLUMN {col} TEXT DEFAULT ''"))
+            conn.commit()
         # WAL 允许多线程读写并发，写锁等待 30s 而不是立即抛 database is locked
         with engine.connect() as conn:
             conn.execute(sa_text("PRAGMA journal_mode=WAL"))
@@ -748,7 +794,15 @@ def init_db() -> None:
                 text = "\n\n".join(c.text for c in chunks)
                 if text:
                     session.add(DocumentFulltext(doc_id=d.id, text=text, char_count=len(text), updated_at=now_str()))
-            if d.file_path and Path(d.file_path).exists():
+            # 迁移后的数据可能残留 Windows 绝对路径，Linux 下会被当成超长文件名
+            # 抛 OSError；坏路径直接跳过，避免单条脏数据导致整个应用启动失败。
+            file_ok = False
+            if d.file_path:
+                try:
+                    file_ok = Path(d.file_path).exists()
+                except OSError:
+                    file_ok = False
+            if file_ok:
                 exists = session.query(DocumentFile).filter(
                     DocumentFile.doc_id == d.id, DocumentFile.kind == "original"
                 ).first()

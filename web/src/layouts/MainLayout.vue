@@ -151,7 +151,7 @@ import { computed, onMounted, onUnmounted, ref, watch, type Component } from 'vu
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ChatDotRound, ArrowDown, ArrowRight, Collection, Document, FolderOpened, HomeFilled, Menu, Plus, Setting, UserFilled } from '@element-plus/icons-vue'
+import { ChatDotRound, ArrowDown, ArrowRight, Collection, Document, FolderOpened, HomeFilled, Menu, Message, Plus, UserFilled } from '@element-plus/icons-vue'
 import KnowledgeMap from '@/components/KnowledgeMap.vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { useAuthStore } from '@/stores/auth'
@@ -210,10 +210,10 @@ const navGroups = computed(() => {
   const basic: NavItem[] = [
     { key: 'library', label: t('nav.library'), path: '/library', icon: FolderOpened, enabled: true },
     { key: 'issues', label: t('nav.issues'), path: '/issues', icon: Collection, enabled: true },
-    { key: 'settings', label: t('nav.settings'), path: '/settings', icon: Setting, enabled: true },
   ]
   if (auth.isAdmin) {
     basic.push({ key: 'users', label: '用户管理', path: '/users', icon: UserFilled, enabled: true })
+    basic.push({ key: 'feedback', label: '反馈监控', path: '/feedback', icon: Message, enabled: true })
   }
   return [
     { label: t('nav.groupAudit'), items: assistantModules.value },

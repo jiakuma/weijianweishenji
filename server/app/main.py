@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import re
 import shutil
@@ -53,6 +54,7 @@ from .db import (
     ensure_category_chain,
     ImportTaskRow,
     NoteRow,
+    QAFeedback,
     QARow,
     QASession,
     QASessionItem,
@@ -64,6 +66,7 @@ from .db import (
     category_to_dict,
     doc_to_dict,
     engine,
+    feedback_to_dict,
     get_raw_settings,
     get_settings,
     init_db,
@@ -77,11 +80,13 @@ from .db import (
 )
 from .auth.common import (
     bind_owner_id,
+    bind_role_hint,
     filter_by_owner,
     get_current_user,
     owner_id_for,
     require_admin,
     reset_owner_id,
+    reset_role_hint,
     user_to_dict,
     verify_token,
 )
@@ -1509,6 +1514,7 @@ def agent_stream(body: AskBody, user: dict = Depends(get_current_user)):
     def worker() -> None:
         ptoken = agent_tools.bind_progress(lambda p: emit({**p, "runId": run_id}))
         owner_token = bind_owner_id(owner)  # 新线程不继承 contextvar，显式绑定数据归属人
+        role_token = bind_role_hint(body.question.strip())  # 对话里的文件角色声明（如"XX是上位文件"）
         qa_id = ""
         try:
             # 开跑前先落 running 占位并挂会话，切页面/刷新后也能读到这条
@@ -1535,12 +1541,15 @@ def agent_stream(body: AskBody, user: dict = Depends(get_current_user)):
             result["id"] = _persist_qa(result, body.sessionId, qa_id=qa_id, owner_id=owner)
             emit({"type": "done", "runId": run_id, "result": result})
         except Exception as exc:
-            msg = f"智能体运行失败：{type(exc).__name__}"
+            detail = str(exc).strip()
+            msg = f"智能体运行失败：{type(exc).__name__}" + (f"：{detail}" if detail else "")
+            logging.getLogger("app").exception("agent_stream 运行失败")
             _finalize_placeholder(qa_id, "error", msg)
             emit({"type": "error", "runId": run_id, "message": msg, "qaId": qa_id})
         finally:
             agent_tools.reset_progress(ptoken)
             reset_owner_id(owner_token)
+            reset_role_hint(role_token)
             agent_run.clear_cancel(run_id)
             events.put(None)
 
@@ -1704,6 +1713,90 @@ def set_feedback(qa_id: str, body: dict):
         if q:
             q.feedback = str(body.get("feedback", ""))
             s.commit()
+    return {"ok": True}
+
+
+class SuggestionBody(BaseModel):
+    content: str
+    rating: str = ""
+    module: str = "assistant"
+    sessionId: str = ""
+
+
+@app.post("/api/qa/{qa_id}/suggestion")
+def submit_suggestion(qa_id: str, body: SuggestionBody,
+                      user: dict = Depends(get_current_user)):
+    content = (body.content or "").strip()
+    if not content:
+        return {"ok": False, "error": "建议内容不能为空"}
+    with SessionLocal() as s:
+        q = s.get(QARow, qa_id)
+        row = QAFeedback(
+            id=uid("fdb"), qa_id=qa_id, session_id=body.sessionId,
+            module=body.module, owner_id=owner_id_for(user),
+            username=str(user.get("displayName") or user.get("username") or ""),
+            rating=body.rating, content=content[:2000],
+            status="pending", created_at=now_str(),
+        )
+        s.add(row)
+        if q:
+            raw_q = (q.question or "")
+            row.question = raw_q[:500]
+            stored = q.answer or {}
+            conclusion = (stored.get("conclusion") or "") if isinstance(stored, dict) else ""
+            row.answer = str(conclusion)[:1000]
+        s.commit()
+    return {"ok": True, "id": row.id}
+
+
+@app.get("/api/admin/feedbacks")
+def list_feedbacks(status: str = "", module: str = "",
+                   start: str = "", end: str = "",
+                   user: dict = Depends(require_admin)):
+    with SessionLocal() as s:
+        query = s.query(QAFeedback)
+        if status:
+            query = query.filter(QAFeedback.status == status)
+        if module:
+            query = query.filter(QAFeedback.module == module)
+        # created_at 形如 "2026-11-23 21:10"，字典序即时间序；end 取整天
+        if start:
+            query = query.filter(QAFeedback.created_at >= start)
+        if end:
+            query = query.filter(QAFeedback.created_at <= (end + " 23:59:59"))
+        rows = query.order_by(QAFeedback.created_at.desc()).limit(500).all()
+        out = []
+        for f in rows:
+            # 老数据没有问题/回答快照，联表补上，避免详情里显示空。
+            q = s.get(QARow, f.qa_id) if f.qa_id else None
+            d = feedback_to_dict(f, "")
+            if not d.get("question") and q:
+                d["question"] = (q.question or "")[:500]
+            if not d.get("answer") and q:
+                stored = q.answer or {}
+                conclusion = stored.get("conclusion", "") if isinstance(stored, dict) else ""
+                d["answer"] = str(conclusion)[:1000]
+            out.append(d)
+        return out
+
+
+class HandleFeedbackBody(BaseModel):
+    status: str
+
+
+@app.post("/api/admin/feedbacks/{feedback_id}/handle")
+def handle_feedback(feedback_id: str, body: HandleFeedbackBody,
+                    admin: dict = Depends(require_admin)):
+    if body.status not in ("pending", "handled", "ignored"):
+        return {"ok": False, "error": "无效状态"}
+    with SessionLocal() as s:
+        row = s.get(QAFeedback, feedback_id)
+        if not row:
+            return {"ok": False, "error": "记录不存在"}
+        row.status = body.status
+        row.handled_by = str(admin.get("username") or "")
+        row.handled_at = now_str()
+        s.commit()
     return {"ok": True}
 
 

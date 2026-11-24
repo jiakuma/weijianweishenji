@@ -22,6 +22,22 @@ logger = logging.getLogger("auth")
 
 # 后台 SSE 线程里无法继承 request 依赖，用 contextvar 显式传递当前数据归属人。
 _owner_id: contextvars.ContextVar[str] = contextvars.ContextVar("audit_owner_id", default="")
+# 底稿审核：用户在对话里声明的上位文件名（原文），随 SSE 工作线程透传到审核工具。
+_role_hint: contextvars.ContextVar[str] = contextvars.ContextVar("audit_role_hint", default="")
+
+
+def bind_role_hint(text: str) -> object:
+    """把用户在对话里关于文件角色的声明绑定到当前线程上下文。"""
+    return _role_hint.set(text or "")
+
+
+def reset_role_hint(token: object) -> None:
+    """恢复 contextvar，避免线程池复用导致声明串到别的请求。"""
+    _role_hint.reset(token)
+
+
+def get_role_hint() -> str:
+    return _role_hint.get() or ""
 
 
 def bind_owner_id(owner_id: str) -> object:

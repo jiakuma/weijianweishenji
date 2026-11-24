@@ -382,9 +382,12 @@ def _reorder_for_attention(chunks: list[dict]) -> list[dict]:
 def _generate(question: str, chunks: list[dict]) -> dict | None:
     if not _has_llm():
         return None
+    def _flat(text: str) -> str:
+        return " ".join(text.split())[:600]
+
     context = "\n\n".join(
         f"[{i + 1}] 《{h['docTitle']}》第 {h['page']} 页 · {h['section']}\n"
-        f"{re.sub(r'\s+', ' ', h['text']).strip()[:600]}"
+        f"{_flat(h['text'])}"
         for i, h in enumerate(chunks)
     )
     sys = (

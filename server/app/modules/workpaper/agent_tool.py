@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from ... import agent_tools
-from ...auth.common import get_owner_id
+from ...auth.common import get_owner_id, get_role_hint
 from ...db import AssistantUpload, Document, DocumentFile, SessionLocal, now_str
 from ...llm import llm_config
 from .models import WorkpaperTask
@@ -123,7 +123,7 @@ def detect(args: dict) -> dict:
     watcher = threading.Thread(target=_watch, args=(task, stop, emit), daemon=True)
     watcher.start()
     try:
-        report = analyze_workpapers(uploaded, task=task, llm=llm)
+        report = analyze_workpapers(uploaded, task=task, llm=llm, role_hint=get_role_hint())
     except Exception as exc:
         stop.set()
         watcher.join(timeout=2)

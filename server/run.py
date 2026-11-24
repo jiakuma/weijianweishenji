@@ -9,8 +9,10 @@ import sys
 
 import uvicorn
 
-HOST = "0.0.0.0"
-PORT = 5281
+from app.config import settings
+
+HOST = settings.APP_HOST
+PORT = settings.APP_PORT
 
 
 def _port_in_use(port: int, host: str = "127.0.0.1") -> bool:

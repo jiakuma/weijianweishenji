@@ -320,6 +320,23 @@ export interface QAResult {
   files?: string[]
 }
 
+export interface QAFeedbackItem {
+  id: string
+  qaId: string
+  sessionId: string
+  module: string
+  ownerId: string
+  username: string
+  rating: string
+  question: string
+  answer: string
+  content: string
+  status: string
+  handledBy: string
+  handledAt: string
+  createdAt: string
+}
+
 export interface AgentConfirm {
   confirmId: string
   tool: string

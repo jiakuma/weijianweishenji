@@ -1,0 +1,18 @@
+[Unit]
+Description=Audit Work Platform Backend
+After=network.target
+
+[Service]
+Type=simple
+User=audit
+Group=audit
+WorkingDirectory=/opt/audit-platform/server
+Environment="PATH=/opt/audit-platform/venv/bin"
+ExecStart=/opt/audit-platform/venv/bin/python run.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/audit-platform/app.log
+StandardError=append:/var/log/audit-platform/error.log
+
+[Install]
+WantedBy=multi-user.target

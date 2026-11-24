@@ -7,6 +7,7 @@ export default {
   common: {
     confirm: 'Confirm',
     cancel: 'Cancel',
+    submit: 'Submit',
     save: 'Save',
     delete: 'Delete',
     retry: 'Retry',
@@ -33,7 +34,6 @@ export default {
     library: 'Library',
     issues: 'Issue Library',
     import: 'Import',
-    settings: 'Settings',
     knowledgeMap: 'Knowledge Map',
   },
   assistant: {
@@ -47,6 +47,10 @@ export default {
     analyzing: 'Analyzing files...',
     finalizing: 'Preparing result...',
     uploadHint: 'PDF / Word / PPT / images, multiple allowed',
+    workpaperTip: 'Upload the upper-level plan first, then the workpapers; you can also specify which is the plan in your message',
+    suggest: 'Feedback',
+    suggestTitle: 'Improvement suggestion',
+    suggestPlaceholder: 'What was unsatisfactory about this answer? Write your suggestion...',
     guide: {
       assistant: 'Ask a question and get cited answers from the library.',
       conflict: 'Upload policies to detect conflicting clauses.',

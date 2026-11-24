@@ -7,6 +7,7 @@ export default {
   common: {
     confirm: '确定',
     cancel: '取消',
+    submit: '提交',
     save: '保存',
     delete: '删除',
     retry: '重试',
@@ -33,7 +34,6 @@ export default {
     library: '资料库',
     issues: '历史问题库',
     import: '导入资料',
-    settings: '系统设置',
     knowledgeMap: '知识图谱',
   },
   assistant: {
@@ -47,6 +47,10 @@ export default {
     analyzing: '正在分析文件…',
     finalizing: '正在整理结果…',
     uploadHint: '支持 PDF / Word / PPT / 图片，可多选',
+    workpaperTip: '先传上位文件（审计实施方案），再传底稿；也可在消息里指明哪个是上位',
+    suggest: '提建议',
+    suggestTitle: '改进建议',
+    suggestPlaceholder: '这次回答哪里不满意？写下你的建议…',
     guide: {
       assistant: '输入问题，基于已导入的资料给出带引用的回答。',
       conflict: '上传制度文件，检查相互冲突（互斥）的条款。',
